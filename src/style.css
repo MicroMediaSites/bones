@@ -235,6 +235,12 @@ a {
     calc((100dvh - var(--chrome)) / var(--rows)),
     88px
   );
+  /* Shared by cells, mats, notches AND placed tiles (tiles are siblings of
+     cells, so these must live here, not on .cell). */
+  --slot: linear-gradient(160deg, #3b332b 0%, #2f2822 100%);
+  --mat-inset: max(4px, calc(var(--cell) * 0.07));
+  --mat-border: max(2px, calc(var(--cell) * 0.035));
+  --mat-radius: max(5px, calc(var(--cell) * 0.1));
   display: grid;
   grid-template-columns: repeat(var(--cols), var(--cell));
   grid-template-rows: repeat(var(--rows), var(--cell));
@@ -247,10 +253,6 @@ a {
   /* The slot: a pocket cut into the board plate. Lighter and warmer than the
      felt so the board's silhouette (holes included) reads before any colour
      does. Regions sit on top as .mat elements (render.ts). */
-  --slot: linear-gradient(160deg, #3b332b 0%, #2f2822 100%);
-  --mat-inset: max(4px, calc(var(--cell) * 0.07));
-  --mat-border: max(2px, calc(var(--cell) * 0.035));
-  --mat-radius: max(5px, calc(var(--cell) * 0.1));
   background: var(--slot);
   box-shadow:
     inset 0 0 0 1px rgba(255, 240, 210, 0.07),
@@ -374,8 +376,11 @@ a {
 .tile.placed,
 .tile.preview {
   z-index: 2;
-  /* Inset so the region wash and its ok/bad tint still read around a tile. */
-  margin: 4px;
+  /* A tile sits inside its section's outline, in the pocket the mat draws:
+     the same inset as the mat plus its border, and the same rounding, so a
+     placed bone matches the section it fills instead of overhanging it. */
+  margin: calc(var(--mat-inset) + var(--mat-border));
+  border-radius: calc(var(--mat-radius) - 2px);
 }
 
 .tile.placed {
