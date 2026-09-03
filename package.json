@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p server",
     "test": "bun test",
     "ratings:report": "bun run scripts/ratings-report.ts",
-    "playtest:live": "bun run scripts/playtest-live.ts"
+    "playtest:live": "bun run scripts/playtest-live.ts",
+    "shot": "bun run scripts/shot.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
