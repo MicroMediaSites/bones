@@ -141,7 +141,7 @@ function deal(difficulty: Difficulty, seed: number): void {
   leaveGame();
   const splash = document.createElement('div');
   splash.className = 'dealing';
-  splash.textContent = `Dealing a ${difficulty} board…`;
+  splash.textContent = `Dealing ${difficulty}…`;
   root.replaceChildren(splash);
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
