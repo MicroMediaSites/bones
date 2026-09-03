@@ -15,7 +15,7 @@ import {
 /** Muted tabletop palette: region wash + the line drawn around its perimeter. */
 // Region colours sit OVER the board slots (see .cell in style.css), so they
 // need real opacity to read as sections; the hues stay muted.
-const REGION_SKINS = [
+export const REGION_SKINS = [
   { fill: 'rgba(178,142,70,0.42)', edge: 'rgba(214,180,104,0.92)' }, // ochre
   { fill: 'rgba(96,132,160,0.42)', edge: 'rgba(138,178,206,0.92)' }, // slate
   { fill: 'rgba(170,94,66,0.42)', edge: 'rgba(212,132,102,0.92)' }, // rust
@@ -46,7 +46,10 @@ export function renderBoard(
 
   const regionAt = new Map<string, Region>();
   const skinOf = new Map<number, number>();
-  const tagAt = new Map<string, { label: string; skin: (typeof REGION_SKINS)[number] }>();
+  const tagAt = new Map<
+    string,
+    { label: string; skin: (typeof REGION_SKINS)[number]; regionId: number }
+  >();
   puzzle.regions.forEach((region, i) => {
     skinOf.set(region.id, i % REGION_SKINS.length);
     for (const cell of region.cells) regionAt.set(cellKey(cell.r, cell.c), region);
@@ -56,7 +59,11 @@ export function renderBoard(
     for (const cell of region.cells) {
       if (cell.r < corner.r || (cell.r === corner.r && cell.c < corner.c)) corner = cell;
     }
-    tagAt.set(cellKey(corner.r, corner.c), { label, skin: REGION_SKINS[i % REGION_SKINS.length] ?? REGION_SKINS[0] });
+    tagAt.set(cellKey(corner.r, corner.c), {
+      label,
+      skin: REGION_SKINS[i % REGION_SKINS.length] ?? REGION_SKINS[0],
+      regionId: region.id,
+    });
   });
 
   for (let r = 0; r < puzzle.rows; r++) {
@@ -121,10 +128,12 @@ export function renderBoard(
       if (tagged) {
         // The rule is a tab in the section's own colour, set inside the mat,
         // so it reads as "the rule for this colour" rather than a footnote.
+        // `data-region` is what app.ts wires the explain-on-tap popover to.
         const tag = document.createElement('span');
         tag.className = 'tag';
         tag.textContent = tagged.label;
         tag.style.background = tagged.skin.edge;
+        tag.dataset.region = String(tagged.regionId);
         cell.appendChild(tag);
       }
       grid.appendChild(cell);
