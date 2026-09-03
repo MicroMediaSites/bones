@@ -195,7 +195,7 @@ body {
   --cell: min(
     calc((100vw - 30px) / var(--cols)),
     calc((100dvh - 252px) / var(--rows)),
-    74px
+    88px
   );
   display: grid;
   grid-template-columns: repeat(var(--cols), var(--cell));
@@ -209,24 +209,28 @@ body {
 }
 
 .cell.ok {
-  background-image: linear-gradient(rgba(124, 172, 118, 0.24), rgba(124, 172, 118, 0.24));
+  background-image: linear-gradient(rgba(124, 172, 118, 0.34), rgba(124, 172, 118, 0.34));
 }
 
 .cell.bad {
-  background-image: linear-gradient(rgba(188, 92, 74, 0.28), rgba(188, 92, 74, 0.28));
+  background-image: linear-gradient(rgba(188, 92, 74, 0.38), rgba(188, 92, 74, 0.38));
 }
 
+/* A small chalk plate, so the label stays readable once a bone tile covers
+   the cell it sits on. */
 .tag {
   position: absolute;
-  top: 1px;
-  left: 4px;
+  top: 2px;
+  left: 2px;
   z-index: 3;
   pointer-events: none;
+  padding: 0 4px 1px;
+  border-radius: 2px;
+  background: rgba(10, 19, 16, 0.82);
   font-family: var(--serif);
-  font-size: clamp(11px, calc(var(--cell) * 0.32), 19px);
-  line-height: 1.15;
-  color: rgba(255, 253, 247, 0.92);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  font-size: clamp(11px, calc(var(--cell) * 0.3), 19px);
+  line-height: 1.25;
+  color: rgba(255, 253, 247, 0.95);
 }
 
 /* ------------------------------------------------------------ tiles */
@@ -276,7 +280,8 @@ body {
 .tile.placed,
 .tile.preview {
   z-index: 2;
-  margin: 3px;
+  /* Inset so the region wash and its ok/bad tint still read around a tile. */
+  margin: 4px;
 }
 
 .tile.placed {
