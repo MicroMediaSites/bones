@@ -197,11 +197,16 @@ body {
   justify-content: center;
 }
 
+.screen.game {
+  /* Hand tile width: four tiles plus gaps always fit the viewport. */
+  --hand: clamp(56px, calc((100vw - 56px) / 4), 88px);
+}
+
 .board {
   /* Everything above and below the board: chrome, tray, safe areas. The rate
      panel adds its own height to this so the board shrinks instead of pushing
      the tray off-screen. */
-  --chrome: 270px;
+  --chrome: calc(178px + var(--tray-rows, 1) * (var(--hand) / 2 + 8px));
   --cell: min(
     calc((100vw - 30px) / var(--cols)),
     calc((100dvh - var(--chrome)) / var(--rows)),
@@ -337,29 +342,23 @@ body {
 .trayzone {
   flex: 0 0 auto;
   margin-top: 10px;
-  min-height: 96px;
+  /* Room for the whole hand, four tiles a row (see --tray-rows in app.ts). */
+  min-height: calc(var(--tray-rows, 1) * (var(--hand) / 2 + 8px) + 8px);
   display: flex;
   align-items: center;
 }
 
+/* Every tile in the hand is always on screen: the tray wraps instead of
+   scrolling, and tiles shrink on narrow phones so four fit a row. */
 .tray {
   width: 100%;
-  min-height: 92px;
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
   gap: 8px;
   padding: 4px 2px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  /* Horizontal panning still scrolls the tray; the tiles themselves take the
-     drag (touch-action: none on .tile). */
-  touch-action: pan-x;
-  scrollbar-width: none;
-}
-
-.tray::-webkit-scrollbar {
-  display: none;
+  touch-action: none;
 }
 
 .tile.in-hand {
@@ -370,13 +369,13 @@ body {
 }
 
 .tile-h.in-hand {
-  width: 88px;
-  height: 44px;
+  width: var(--hand);
+  height: calc(var(--hand) / 2);
 }
 
 .tile-v.in-hand {
-  width: 44px;
-  height: 88px;
+  width: calc(var(--hand) / 2);
+  height: var(--hand);
 }
 
 .tray-empty {
@@ -509,7 +508,7 @@ body {
 
 /* The rate panel eats board height rather than the tray's. */
 .screen.game.rating .board {
-  --chrome: 452px;
+  --chrome: calc(360px + var(--tray-rows, 1) * (var(--hand) / 2 + 8px));
 }
 
 .toast {
