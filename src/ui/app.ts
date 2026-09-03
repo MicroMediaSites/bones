@@ -63,6 +63,8 @@ let boardEl: HTMLElement | null = null;
 let timerEl: HTMLElement | null = null;
 let timerId: ReturnType<typeof setInterval> | null = null;
 let drag: Drag | null = null;
+/** rAF handle for the pending ghost/snap paint, so pointermove never lays out. */
+let dragFrame: number | null = null;
 let rate: RateSession | null = null;
 let regionTap: RegionTap | null = null;
 
@@ -77,9 +79,37 @@ export function mount(el: HTMLElement): void {
   root.addEventListener('pointerdown', onPointerDown);
   root.addEventListener('pointermove', onPointerMove);
   root.addEventListener('pointerup', onPointerUp);
-  root.addEventListener('pointercancel', onPointerUp);
+  // A cancel is not a drop and not a tap — it needs its own handler.
+  root.addEventListener('pointercancel', onPointerCancel);
+  // touch-action in CSS stops the board scrolling, but iOS still synthesises
+  // double-tap zoom and the long-press callout from the raw touch stream, and
+  // it can retract a gesture as a scroll (which arrives as a pointercancel).
+  // Non-passive so preventDefault is honoured; scoped to the play surface so
+  // the home and ratings screens keep scrolling normally.
+  root.addEventListener('touchstart', onTouchStart, { passive: false });
+  root.addEventListener('touchmove', onTouchMove, { passive: false });
+  // Android Chrome opens a selection menu on long-press; a long press on a
+  // tile is a player thinking, not a request for a menu.
+  root.addEventListener('contextmenu', onContextMenu);
   window.addEventListener('hashchange', route);
   route();
+}
+
+/** True for the fixed play surface — the board, a tile, or the hand tray. */
+function isPlaySurface(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-tile], .board, .tray') !== null;
+}
+
+function onTouchStart(e: TouchEvent): void {
+  if (isPlaySurface(e.target)) e.preventDefault();
+}
+
+function onTouchMove(e: TouchEvent): void {
+  if (drag || regionTap) e.preventDefault();
+}
+
+function onContextMenu(e: Event): void {
+  if (isPlaySurface(e.target)) e.preventDefault();
 }
 
 // ---------------------------------------------------------------- routing
@@ -115,6 +145,11 @@ function route(): void {
 /** Drop everything the game screen owns, so another screen starts clean. */
 function leaveGame(): void {
   stopTimer();
+  // A drag left in flight (back button pressed mid-drag, say) would leave a
+  // ghost pinned to the screen and — because onPointerDown bails while `drag`
+  // is set — kill dragging for the rest of the session. The board it belonged
+  // to is going away, so there is nothing to put the tile back onto.
+  if (drag) endDrag(drag.pointerId);
   game = null;
   rate = null;
   regionTap = null;
@@ -153,8 +188,9 @@ function deal(difficulty: Difficulty, seed: number): void {
 }
 
 function openGame(puzzle: Puzzle): void {
-  rate = null;
-  regionTap = null;
+  // Same teardown a screen change does: the previous board's drag, rating and
+  // timer must not survive into the new one (#dev reaches here without deal()).
+  leaveGame();
   game = newGame(puzzle);
   startTimer();
   renderGame();
@@ -428,7 +464,9 @@ function regionAtPoint(g: Game, x: number, y: number): number | null {
 // ---------------------------------------------------------------- dragging
 
 function onPointerDown(e: PointerEvent): void {
-  if (!game || drag) return;
+  // One gesture at a time: a second finger landing mid-drag would otherwise
+  // start a rival drag (or a rival region tap) and strand the first tile.
+  if (!game || drag || !e.isPrimary) return;
 
   // While rating, a tap anywhere on the board flags that cell's region. It is
   // only resolved on pointerup, so dragging a placed tile still works.
@@ -447,6 +485,9 @@ function onPointerDown(e: PointerEvent): void {
   if (!Number.isInteger(tile)) return;
 
   e.preventDefault();
+  // Capture on the root, not the tile: every render replaces the tile's DOM
+  // node, and capture dies with the element it was taken on. The root outlives
+  // every re-render, so the drag survives the board and tray being rebuilt.
   root.setPointerCapture(e.pointerId);
   const origin = game.board.find((p) => p.domino === tile) ?? null;
   // A tile on the board is the truth about its own orientation.
@@ -467,6 +508,12 @@ function onPointerDown(e: PointerEvent): void {
 
 function onPointerMove(e: PointerEvent): void {
   if (!drag || !game || e.pointerId !== drag.pointerId) return;
+  // A mouse or pen move with no button held is hover, or a stray event after
+  // the press already ended; either way it is not the player dragging. Touch is
+  // exempt: there is no hover, and a browser that under-reports `buttons` for
+  // touch would otherwise make the game undraggable on that device.
+  if (e.buttons === 0 && e.pointerType !== 'touch') return;
+
   drag.x = e.clientX;
   drag.y = e.clientY;
 
@@ -477,20 +524,59 @@ function onPointerMove(e: PointerEvent): void {
       unplace(game, drag.tile);
       refreshBoard();
     }
-    drag.ghost = makeGhost(game, drag.tile);
+    drag.ghost = makeGhost(game, drag.tile, drag.x, drag.y);
     document.body.appendChild(drag.ghost);
   }
 
-  if (drag.ghost) {
-    drag.ghost.style.left = `${drag.x}px`;
-    drag.ghost.style.top = `${drag.y}px`;
-  }
+  // Phones coalesce pointermove far faster than they can paint. Doing the work
+  // in a frame keeps the ghost on the finger instead of a queue behind it, and
+  // keeps getBoundingClientRect out of the event handler.
+  if (dragFrame === null) dragFrame = requestAnimationFrame(paintDrag);
+}
 
+/** One frame of the drag: move the ghost, then re-snap if the target changed. */
+function paintDrag(): void {
+  dragFrame = null;
+  if (!drag || !game) return;
+  if (drag.ghost) drag.ghost.style.transform = ghostTransform(drag.x, drag.y);
   const target = snapTarget(game, drag);
   if (cellsKey(target) !== cellsKey(drag.target)) {
     drag.target = target;
     refreshBoard();
   }
+}
+
+/**
+ * Tear the drag down without deciding where the tile goes: drop the ghost,
+ * cancel the pending frame, and hand back the drag so the caller can settle it.
+ */
+function endDrag(pointerId: number): Drag | null {
+  const d = drag;
+  drag = null;
+  if (dragFrame !== null) {
+    cancelAnimationFrame(dragFrame);
+    dragFrame = null;
+  }
+  d?.ghost?.remove();
+  if (root.hasPointerCapture(pointerId)) root.releasePointerCapture(pointerId);
+  return d;
+}
+
+/**
+ * Safari fires pointercancel the moment it reinterprets a gesture as a scroll,
+ * a system edge swipe or an app switch. That is neither a drop nor a tap: the
+ * tile goes back where it came from and the drag state clears, so the next
+ * touch starts fresh.
+ */
+function onPointerCancel(e: PointerEvent): void {
+  if (regionTap && e.pointerId === regionTap.pointerId) regionTap = null;
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  const d = endDrag(e.pointerId);
+  // Only a moved drag changed anything: it unplaced the tile and drew a
+  // preview. A tile with no origin came from the hand and is already back in it.
+  if (!d?.moved || !game) return;
+  if (d.origin) place(game, d.tile, d.origin.cells);
+  renderGame();
 }
 
 function onPointerUp(e: PointerEvent): void {
@@ -501,21 +587,15 @@ function onPointerUp(e: PointerEvent): void {
       drag?.moved === true || Math.hypot(e.clientX - tap.x, e.clientY - tap.y) >= TAP_SLOP_PX;
     if (!moved) {
       // A tap, not a drag: flag the region rather than rotating the tile.
-      const pending = drag;
-      drag = null;
-      pending?.ghost?.remove();
-      if (root.hasPointerCapture(e.pointerId)) root.releasePointerCapture(e.pointerId);
+      endDrag(e.pointerId);
       toggleFlag(tap.region);
       return;
     }
   }
 
   if (!drag || e.pointerId !== drag.pointerId) return;
-  const d = drag;
-  drag = null;
-  d.ghost?.remove();
-  if (root.hasPointerCapture(e.pointerId)) root.releasePointerCapture(e.pointerId);
-  if (!game) return;
+  const d = endDrag(e.pointerId);
+  if (!d || !game) return;
 
   if (!d.moved) {
     rotateTile(game, d.tile);
@@ -584,7 +664,12 @@ function rotateTile(g: Game, tile: number): void {
   }
 }
 
-function makeGhost(g: Game, tile: number): HTMLElement {
+/** Centre the ghost on the finger. Composited, so it never triggers layout. */
+function ghostTransform(x: number, y: number): string {
+  return `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`;
+}
+
+function makeGhost(g: Game, tile: number, x: number, y: number): HTMLElement {
   const pips = g.puzzle.dominoes[tile];
   const orientation = orientationOf(g, tile);
   const vertical = isVertical(orientation);
@@ -598,5 +683,7 @@ function makeGhost(g: Game, tile: number): HTMLElement {
   const cell = rect ? rect.width / g.puzzle.cols : 44;
   el.style.width = `${vertical ? cell : cell * 2}px`;
   el.style.height = `${vertical ? cell * 2 : cell}px`;
+  // Placed before it is appended, so the ghost never flashes at the origin.
+  el.style.transform = ghostTransform(x, y);
   return el;
 }

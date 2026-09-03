@@ -49,8 +49,23 @@ body {
   flex-direction: column;
   padding: calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 12px)
     calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 12px);
+  /* `manipulation` kills the iOS double-tap-to-zoom and the 300ms tap delay
+     while still allowing the pan the ratings list needs. The board, tray and
+     tiles override this with `touch-action: none`. */
+  touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
+  /* No magnifier or copy/define bubble when a player rests a finger on a tile. */
+  -webkit-touch-callout: none;
+}
+
+/* Text the player may legitimately want to select or edit — the rating note and
+   the ratings JSON escape hatch — opts back out of the screen-wide rules. */
+.note,
+.json-fallback {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .wordmark {
@@ -62,6 +77,14 @@ body {
 }
 
 /* ------------------------------------------------------------ buttons */
+
+/* Every tappable control, including the ones inside board/tray subtrees that
+   set `touch-action: none`: a button must stay tappable, but must never be the
+   first half of a double-tap zoom. */
+button,
+a {
+  touch-action: manipulation;
+}
 
 .btn {
   font: inherit;
@@ -266,7 +289,10 @@ body {
   display: flex;
   border-radius: 3px;
   overflow: hidden;
+  /* The whole tile is a drag handle: the browser must not claim the gesture as
+     a scroll, a zoom, or a native image drag. */
   touch-action: none;
+  -webkit-user-drag: none;
 }
 
 .tile-h {
@@ -329,9 +355,14 @@ body {
 
 .tile.ghost {
   position: fixed;
+  /* Anchored at the origin and moved only by the transform app.ts writes in a
+     rAF loop, so the ghost rides the compositor and stays under the finger
+     instead of trailing it by a layout pass per pointermove. */
+  left: 0;
+  top: 0;
+  will-change: transform;
   z-index: 50;
   pointer-events: none;
-  transform: translate(-50%, -50%);
   opacity: 0.92;
   background: var(--bone-face);
   box-shadow: var(--bone-edge), 0 12px 24px rgba(0, 0, 0, 0.6);
