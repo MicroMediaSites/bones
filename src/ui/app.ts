@@ -1,8 +1,9 @@
 // Screens, routing and pointer-drag. Owns the single mutable Game.
 
 import { generate, validate } from '../engine';
-import type { Cell, Difficulty, Placement, Puzzle } from '../engine';
+import type { Cell, Difficulty, Placement, Puzzle, Validation } from '../engine';
 import { devPuzzle } from './devFixtures';
+import { closeHelp, hideRulePopover, openHelp, shouldAutoOpenHelp, wireRuleTags } from './help';
 import { tileEl } from './pips';
 import { createRatePanel, toast, type RatePanel } from './ratePanel';
 import { loadRatings, ratingId, saveRating, type Rating, type Verdict } from './ratings';
@@ -145,6 +146,8 @@ function route(): void {
 /** Drop everything the game screen owns, so another screen starts clean. */
 function leaveGame(): void {
   stopTimer();
+  hideRulePopover();
+  closeHelp();
   // A drag left in flight (back button pressed mid-drag, say) would leave a
   // ghost pinned to the screen and — because onPointerDown bails while `drag`
   // is set — kill dragging for the rest of the session. The board it belonged
@@ -200,6 +203,7 @@ function openGame(puzzle: Puzzle): void {
   game = newGame(puzzle);
   startTimer();
   renderGame();
+  if (shouldAutoOpenHelp()) openHelp();
 }
 
 function exitGame(): void {
@@ -263,6 +267,10 @@ function renderHome(): void {
     picker.appendChild(button(label, 'btn btn-lg', () => startPuzzle(difficulty)));
   }
 
+  const hint = document.createElement('p');
+  hint.className = 'home-hint';
+  hint.textContent = 'Tap any rule on the board to see what it means.';
+
   const legend = document.createElement('div');
   legend.className = 'legend';
   const entries: [string, string][] = [
@@ -285,7 +293,7 @@ function renderHome(): void {
   ratingsLink.href = '#ratings';
   ratingsLink.textContent = 'Ratings';
 
-  screen.append(title, tagline, picker, legend, ratingsLink);
+  screen.append(title, tagline, picker, hint, legend, ratingsLink);
   boardEl = null;
   timerEl = null;
   root.replaceChildren(screen);
@@ -297,8 +305,21 @@ function renderRatings(): void {
   root.replaceChildren(buildRatingsScreen(renderRatings));
 }
 
+/**
+ * A board, with its rule tabs wired to explain themselves. While rating, a tap
+ * anywhere on the board flags that region (see onPointerDown), so the tabs stay
+ * inert rather than eating those taps.
+ */
+function buildBoard(g: Game, status: Validation, preview: Placement | null): HTMLElement {
+  const el = renderBoard(g, status, preview, flaggedRegions());
+  if (!rate) wireRuleTags(el, g);
+  return el;
+}
+
 function renderGame(): void {
   if (!game) return;
+  // A popover explains a board that is about to be replaced; it goes with it.
+  hideRulePopover();
   const status = validate(game.puzzle, game.board);
   if (status.solved) stopTimer();
 
@@ -322,7 +343,9 @@ function renderGame(): void {
   timerEl.textContent = elapsed(game);
   const rateBtn = button(rate ? 'Rating…' : 'Rate', 'btn btn-rate', openRatePanel);
   rateBtn.disabled = rate !== null;
-  topline.append(mark, chip, timerEl, rateBtn);
+  const helpBtn = button('?', 'btn btn-help', openHelp);
+  helpBtn.setAttribute('aria-label', 'How to play');
+  topline.append(mark, chip, timerEl, rateBtn, helpBtn);
 
   const controls = document.createElement('div');
   controls.className = 'controls';
@@ -338,7 +361,7 @@ function renderGame(): void {
 
   const wrap = document.createElement('div');
   wrap.className = 'boardwrap';
-  boardEl = renderBoard(game, status, null, flaggedRegions());
+  boardEl = buildBoard(game, status, null);
   wrap.appendChild(boardEl);
 
   const trayZone = document.createElement('div');
@@ -384,7 +407,7 @@ function refreshBoard(): void {
   if (!game || !boardEl) return;
   const preview: Placement | null =
     drag?.target ? { domino: drag.tile, cells: drag.target } : null;
-  const next = renderBoard(game, validate(game.puzzle, game.board), preview, flaggedRegions());
+  const next = buildBoard(game, validate(game.puzzle, game.board), preview);
   boardEl.replaceWith(next);
   boardEl = next;
 }

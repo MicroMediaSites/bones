@@ -15,6 +15,14 @@ Rules a region can carry:
 Every puzzle is generated on demand at easy, medium, or hard, and checked by
 a solver before it is served.
 
+The game explains itself in place. **Tap any rule tab on the board** for a
+popover with that rule in plain English and how its region currently stands
+("So far 4, with 1 cell empty"); it clears on the next tap, on Escape, or after
+five seconds. The **?** button in the game header opens a *How to play* sheet,
+which also opens itself the first time you reach a board (remembered under
+`bones.seenHelp` in `localStorage`, and skipped entirely under automation so it
+can't destabilise `playtest:live`).
+
 ## Develop
 
 ```sh

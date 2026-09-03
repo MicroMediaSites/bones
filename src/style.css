@@ -307,13 +307,18 @@ a {
 
 /* The rule tab: the section's edge colour as a solid chip with dark ink, set
    just inside the mat's corner. z-index keeps it readable once a bone tile
-   covers the cell it sits on. Background colour comes from render.ts. */
+   covers the cell it sits on. Background colour comes from render.ts.
+   It is tappable (app.ts wires a popover to it) — the board sets
+   `touch-action: none`, so the tab opts back into `manipulation` to keep the
+   tap fast and out of iOS's double-tap-zoom. */
 .tag {
   position: absolute;
   top: calc(var(--mat-inset) + var(--mat-border) + 3px);
   left: calc(var(--mat-inset) + var(--mat-border) + 3px);
   z-index: 3;
-  pointer-events: none;
+  pointer-events: auto;
+  touch-action: manipulation;
+  cursor: help;
   min-width: 1.4em;
   padding: 0 5px 1px;
   border-radius: 3px;
@@ -823,4 +828,213 @@ a {
 }
 .cell.bad .tag::after {
   content: ' ✗';
+}
+
+/* The tab is ~20px of ink; a thumb needs more. An invisible square centred on
+   it takes the tap without changing how the tab looks. The cost is that the
+   tab's own corner stops being a drag handle for the bone underneath — the
+   bone's other half still is, and a tap here is meant to explain, not rotate. */
+.tag::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+}
+
+/* ------------------------------------------------------------ rule popover */
+
+/* What a tab means, and how its section is doing — a chalk plate above the
+   tab it explains. Never interactive: the next tap anywhere dismisses it. */
+.rulepop {
+  position: fixed;
+  z-index: 65;
+  max-width: 30ch;
+  padding: 9px 11px;
+  border: 1px solid rgba(199, 154, 78, 0.5);
+  border-left: 2px solid var(--brass);
+  border-radius: 3px;
+  background: rgba(14, 24, 21, 0.96);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+.rulepop.in {
+  opacity: 1;
+  transform: none;
+}
+
+.rulepop p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.rulepop p + p {
+  margin-top: 5px;
+}
+
+.rulepop-state {
+  color: var(--brass);
+}
+
+/* ------------------------------------------------------------ how to play */
+
+.btn-help {
+  min-width: 44px;
+  padding: 0;
+  font-size: 17px;
+  border-color: rgba(199, 154, 78, 0.42);
+  background: rgba(199, 154, 78, 0.09);
+}
+
+.home-hint {
+  margin: 16px 0 0;
+  max-width: 32ch;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: rgba(232, 226, 212, 0.45);
+}
+
+/* An overlay, never part of .screen.game: the board sizes itself off a fixed
+   --chrome budget, so anything in the flow would squeeze it. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(6, 12, 10, 0.62);
+  animation: sheet-fade 120ms ease-out;
+}
+
+.sheet {
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 28px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px calc(env(safe-area-inset-right) + 16px)
+    calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 16px);
+  border: 1px solid rgba(199, 154, 78, 0.42);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: rgba(14, 24, 21, 0.98);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+  animation: sheet-rise 160ms ease-out;
+}
+
+@keyframes sheet-fade {
+  from { opacity: 0; }
+}
+
+@keyframes sheet-rise {
+  from { transform: translateY(18px); }
+}
+
+.sheet-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  color: var(--brass);
+}
+
+.sheet-head {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: rgba(232, 226, 212, 0.45);
+}
+
+.sheet-list {
+  margin: 0;
+  padding: 0 0 0 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.sheet-rules {
+  list-style: none;
+  padding-left: 0;
+  gap: 7px;
+}
+
+.sheet-rules li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The rule tab as it looks on the board, at reading size. Kept separate from
+   .tag, which is absolutely positioned inside a cell. */
+.help-tab {
+  flex: 0 0 auto;
+  min-width: 2.2em;
+  padding: 1px 6px 2px;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 14px;
+  text-align: center;
+  color: #1c1712;
+}
+
+/* The free-cell slot in miniature: bare board, dashed ring, centre dot. */
+.help-free {
+  position: relative;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 2px dashed rgba(232, 226, 212, 0.32);
+  border-radius: 3px;
+  background: linear-gradient(160deg, #3b332b 0%, #2f2822 100%);
+}
+
+.help-free::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(232, 226, 212, 0.3);
+}
+
+.sheet-free {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.sheet-note {
+  margin: 9px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: rgba(232, 226, 212, 0.5);
+}
+
+.btn-gotit {
+  width: 100%;
+  margin-top: 18px;
+  border-color: rgba(199, 154, 78, 0.55);
+  background: rgba(199, 154, 78, 0.14);
 }
