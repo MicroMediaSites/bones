@@ -1,7 +1,7 @@
 // DOM builders for the board and the tray. Pure: no event wiring here.
 
 import { cellKey, ruleLabel } from '../engine';
-import type { Placement, Puzzle, Region, Validation } from '../engine';
+import type { Cell, Placement, Puzzle, Region, Validation } from '../engine';
 import { tileEl } from './pips';
 import {
   anchorOf,
@@ -131,13 +131,37 @@ export function renderBoard(
     }
   }
 
-  for (const placement of game.board) grid.appendChild(placementEl(puzzle, placement, true));
-  if (preview) grid.appendChild(placementEl(puzzle, preview, false));
+  // What a placed tile's half needs to know about the cell under it, so the
+  // map survives being covered: the section's colour, whether that section is
+  // right or wrong, and whether a rule tab sits in this corner.
+  const under = (cell: Cell): HalfContext => {
+    const region = regionAt.get(cellKey(cell.r, cell.c));
+    const skin = REGION_SKINS[region ? (skinOf.get(region.id) ?? 0) : 0] ?? REGION_SKINS[0];
+    const state = region ? status.regions[region.id] : undefined;
+    return {
+      tint: region && region.rule.kind !== 'none' ? skin.fill : null,
+      state: state === 'ok' || state === 'bad' ? state : null,
+      tagged: tagAt.has(cellKey(cell.r, cell.c)),
+    };
+  };
+  for (const placement of game.board) grid.appendChild(placementEl(puzzle, placement, true, under));
+  if (preview) grid.appendChild(placementEl(puzzle, preview, false, under));
   return grid;
 }
 
+interface HalfContext {
+  tint: string | null;
+  state: 'ok' | 'bad' | null;
+  tagged: boolean;
+}
+
 /** A tile laid across the two cells of `placement`, as a grid item. */
-function placementEl(puzzle: Puzzle, placement: Placement, interactive: boolean): HTMLElement {
+function placementEl(
+  puzzle: Puzzle,
+  placement: Placement,
+  interactive: boolean,
+  under: (cell: Cell) => HalfContext,
+): HTMLElement {
   const [pipA, pipB] = puzzle.dominoes[placement.domino] ?? [0, 0];
   const anchor = anchorOf(placement);
   const vertical = isVertical(placedOrientation(placement));
@@ -146,6 +170,18 @@ function placementEl(puzzle: Puzzle, placement: Placement, interactive: boolean)
 
   const el = tileEl(anchorHoldsFirst ? pipA : pipB, anchorHoldsFirst ? pipB : pipA, vertical);
   el.classList.add(interactive ? 'placed' : 'preview');
+  // Each half wears its cell's section colour (and right/wrong tint), and
+  // slides its pips away from a rule tab, so a covered board still reads.
+  const other = anchorHoldsFirst ? placement.cells[1] : placement.cells[0];
+  const halves = el.querySelectorAll<HTMLElement>('.half');
+  [anchor, other].forEach((cell, i) => {
+    const half = halves[i];
+    if (!half) return;
+    const ctx = under(cell);
+    if (ctx.tint) half.style.setProperty('--tint', ctx.tint);
+    if (ctx.state) half.classList.add(ctx.state);
+    if (ctx.tagged) half.classList.add('tagged');
+  });
   if (interactive) el.dataset.tile = String(placement.domino);
   el.style.gridRow = `${anchor.r + 1} / span ${vertical ? 2 : 1}`;
   el.style.gridColumn = `${anchor.c + 1} / span ${vertical ? 1 : 2}`;

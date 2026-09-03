@@ -369,6 +369,31 @@ a {
   height: 76%;
 }
 
+/* A placed half wears the colour of the section under it — a wash over the
+   bone, strong enough that the map survives being covered — and its
+   right/wrong tint, which used to hide under the tile. */
+.tile.placed .half {
+  background: linear-gradient(var(--tint, transparent), var(--tint, transparent));
+}
+.tile.placed .half.ok {
+  background:
+    linear-gradient(rgba(124, 172, 118, 0.3), rgba(124, 172, 118, 0.3)),
+    linear-gradient(var(--tint, transparent), var(--tint, transparent));
+}
+.tile.placed .half.bad {
+  background:
+    linear-gradient(rgba(188, 92, 74, 0.34), rgba(188, 92, 74, 0.34)),
+    linear-gradient(var(--tint, transparent), var(--tint, transparent));
+}
+/* A half under a rule tab gives the tab its corner: pips shrink toward the
+   opposite corner instead of colliding with it. */
+.tile.placed .half.tagged .face,
+.tile.preview .half.tagged .face {
+  width: 60%;
+  height: 60%;
+  transform: translate(14%, 14%);
+}
+
 .pip {
   fill: #191510;
 }
@@ -789,4 +814,13 @@ a {
   margin: -3.5px 0 0 -3.5px;
   border-radius: 50%;
   background: rgba(232, 226, 212, 0.3);
+}
+
+/* A completed section says so on its own tab, since the wash on the tiles
+   can blend with green or rust sections. */
+.cell.ok .tag::after {
+  content: ' ✓';
+}
+.cell.bad .tag::after {
+  content: ' ✗';
 }
