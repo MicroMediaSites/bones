@@ -96,7 +96,7 @@ function route(): void {
   if (difficulty && seed !== undefined) {
     const n = Number(seed);
     if (game && game.puzzle.difficulty === difficulty && game.puzzle.seed === n) return;
-    openGame(generate(difficulty, n));
+    deal(difficulty, n);
     return;
   }
   if (location.hash === '#dev') {
@@ -129,7 +129,27 @@ function setHash(hash: string): void {
 function startPuzzle(difficulty: Difficulty): void {
   const seed = freshSeed();
   setHash(`#${difficulty}-${seed}`);
-  openGame(generate(difficulty, seed));
+  deal(difficulty, seed);
+}
+
+/**
+ * Show a dealing screen, then build the puzzle once that has painted. Hard
+ * boards take a second or more to settle, and a button that freezes reads as
+ * broken. Two frames guarantee the splash is on screen before the work starts.
+ */
+function deal(difficulty: Difficulty, seed: number): void {
+  leaveGame();
+  const splash = document.createElement('div');
+  splash.className = 'dealing';
+  splash.textContent = `Dealing ${difficulty}…`;
+  root.replaceChildren(splash);
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      // The hash is the source of truth; if it moved on, so has the player.
+      if (location.hash !== `#${difficulty}-${seed}`) return;
+      openGame(generate(difficulty, seed));
+    }),
+  );
 }
 
 function openGame(puzzle: Puzzle): void {
