@@ -8,6 +8,9 @@
 // puzzle is the record of truth, and the reason a record stands alone.
 
 import type { Puzzle } from '../engine';
+// `ratings.ts` is also imported by the report script and by tests, where there
+// is no DOM. That is safe only while `ratePanel.ts` touches the document from
+// inside functions and never at module level — keep it that way.
 import { toast } from './ratePanel';
 
 export const RATINGS_KEY = 'bones.ratings';
@@ -180,8 +183,9 @@ export function saveRating(rating: Rating): boolean {
   const kept = loadRatings().filter((r) => r.id !== rating.id);
   const stored = writeRatings([rating, ...kept]);
   markUnsent(rating.id);
-  void push(rating).then((ok) => {
-    if (!ok) toast('Saved offline — will retry');
+  void push(rating).then((result) => {
+    if (result === 'offline') toast('Saved offline — will retry');
+    else if (result === 'rejected') toast('Server rejected this rating');
   });
   return stored;
 }
@@ -199,8 +203,14 @@ export function clearRatings(): boolean {
 
 // ---------------------------------------------------------------- server
 
-/** POST one record; a 4xx counts as delivered — retrying it will never help. */
-async function push(rating: Rating): Promise<boolean> {
+/**
+ * The three outcomes of a push, kept apart because they mean different things
+ * to the queue: only `offline` is worth retrying. A record the server refuses
+ * on shape would be refused forever, so it leaves the queue and says so.
+ */
+type PushResult = 'ok' | 'rejected' | 'offline';
+
+async function push(rating: Rating): Promise<PushResult> {
   let response: Response;
   try {
     response = await fetch(`${RATINGS_URL}/ratings`, {
@@ -209,13 +219,16 @@ async function push(rating: Rating): Promise<boolean> {
       body: JSON.stringify(rating),
     });
   } catch {
-    return false;
+    return 'offline';
   }
-  if (response.ok || (response.status >= 400 && response.status < 500 && response.status !== 429)) {
+  if (response.ok) {
     markSent(rating.id);
-    return response.ok;
+    return 'ok';
   }
-  return false;
+  // 429 is the rate limiter, and 5xx is the server having a moment: both pass.
+  if (response.status === 429 || response.status >= 500) return 'offline';
+  markSent(rating.id);
+  return 'rejected';
 }
 
 /** The whole corpus from the server, newest first. */
@@ -227,7 +240,10 @@ export async function fetchRatings(): Promise<Rating[]> {
   return parsed.filter(isRating).sort((a, b) => b.at.localeCompare(a.at));
 }
 
-/** Retry everything the server has not acknowledged. Safe to call any time. */
+/**
+ * Retry everything the server has not acknowledged. Silent by design — this
+ * runs on page load, and a queue draining in the background is not news.
+ */
 export async function flushUnsent(): Promise<void> {
   const ids = unsentIds();
   if (ids.size === 0) return;
@@ -236,13 +252,15 @@ export async function flushUnsent(): Promise<void> {
     const rating = byId.get(id);
     // The record is gone from the mirror (cleared, or evicted); stop tracking.
     if (!rating) markSent(id);
-    else if (!(await push(rating))) return; // Still offline — leave the rest queued.
+    // Still offline — leave the rest of the queue for the next page load.
+    else if ((await push(rating)) === 'offline') return;
   }
 }
 
-// Retry on load: the page Matt opens next is the only trigger this prototype
-// gets. Guarded so the report script, which imports the guards from here, does
-// not try to talk to the network.
+// Retry on load, on whatever page Matt opens next — including a puzzle, which
+// is the point: a rating made on a train should land without him going looking
+// for the ratings screen. Guarded so the report script and the tests, which
+// import the shape guards from here, never touch the network.
 if (typeof document !== 'undefined') void flushUnsent();
 
 /** The corpus as the JSON that the report script eats. */

@@ -33,6 +33,14 @@ no dependencies, its own `package.json` and `tsconfig.json`; see
 
 ## Rating puzzles
 
+**The "no backend, no network calls at runtime" non-goal is retired, for
+ratings only.** The game itself is unchanged: generating, playing, solving and
+validating a puzzle still happen entirely in the browser and still work with
+the network off. What changed is that the rating corpus is shared — a rating
+saved anywhere reaches the server, and every page load quietly retries anything
+still queued. Anything *else* that wants to talk to the network still needs its
+own argument.
+
 Generated boards vary in quality, so the game can label them. In a puzzle, tap
 **Rate**: mark it **Good** or **Bad**, type a one-line note, and tap any region
 on the board to flag it (flagged regions get a dashed ring on every cell).
