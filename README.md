@@ -10,8 +10,7 @@ Rules a region can carry:
 | `7` | the pips in the region add up to exactly 7 |
 | `<5` / `>9` | the pips add up to less than 5 / more than 9 |
 | `=` | every pip in the region is the same |
-| `≠` | every pip in the region is different |
-| (blank) | anything goes |
+| (blank, dashed) | no requirement — anything goes |
 
 Every puzzle is generated on demand at easy, medium, or hard, and checked by
 a solver before it is served.
@@ -27,26 +26,47 @@ bun run typecheck
 
 `src/engine/` is pure TypeScript (no DOM): types, generator, solver,
 validator. `src/ui/` renders and handles input. The engine contract is
-`src/engine/types.ts`.
+`src/engine/types.ts`. `server/` is the ratings service — Bun + `bun:sqlite`,
+no dependencies, its own `package.json` and `tsconfig.json`; see
+`server/README.md`.
 
 ## Rating puzzles
+
+**The "no backend, no network calls at runtime" non-goal is retired, for
+ratings only.** The game itself is unchanged: generating, playing, solving and
+validating a puzzle still happen entirely in the browser and still work with
+the network off. What changed is that the rating corpus is shared — a rating
+saved anywhere reaches the server, and every page load quietly retries anything
+still queued. Anything *else* that wants to talk to the network still needs its
+own argument.
 
 Generated boards vary in quality, so the game can label them. In a puzzle, tap
 **Rate**: mark it **Good** or **Bad**, type a one-line note, and tap any region
 on the board to flag it (flagged regions get a dashed ring on every cell).
 **Save** overwrites any previous rating of that puzzle.
 
-Ratings live in `localStorage` under `bones.ratings`. The **#ratings** page
-(linked from the home screen) shows the counts and every record, and can copy
-or download the corpus as JSON. Each record embeds the whole puzzle, because
-the generator is still moving — replaying a seed may not reproduce the board
-that was rated.
+Ratings go to a small server, so a puzzle rated on a phone shows up on a
+laptop: <https://ratings-production-199b.up.railway.app> (`server/`, deployed on
+Railway with a volume at `/data`). Point the build somewhere else with
+`VITE_RATINGS_URL=http://localhost:8787 bun run build`.
 
-Drop an exported file into `ratings/` and run the report:
+`localStorage` is now a mirror and a retry queue: a save always lands in the
+browser under `bones.ratings` and is pushed to the server; if that push fails
+the toast says **Saved offline — will retry**, the id is queued under
+`bones.ratings.unsent`, and the next page load retries it. The **#ratings**
+page (linked from the home screen) shows the server's corpus merged with
+anything still queued (tagged `unsent`), and can copy or download it as JSON.
+**Clear local** empties this browser's mirror only — the server keeps its copy.
+
+Each record embeds the whole puzzle, because the generator is still moving —
+replaying a seed may not reproduce the board that was rated.
+
+Run the report:
 
 ```sh
-bun run ratings:report            # reads ratings/
-bun run ratings:report some.json  # or explicit files/dirs
+bun run ratings:report                # the ratings server ($RATINGS_URL wins)
+bun run ratings:report ratings/       # exported files or dirs instead
+bun run ratings:report http://localhost:8787
 ```
 
 It prints one row of measurable properties per puzzle (regions, mean region

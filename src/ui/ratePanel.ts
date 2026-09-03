@@ -100,8 +100,13 @@ export function createRatePanel(
   return panel;
 }
 
-/** A short-lived confirmation, e.g. "Saved". */
+/**
+ * A short-lived confirmation, e.g. "Saved". Only one is ever on screen: a save
+ * reports locally first and then again if the push to the server failed, and
+ * the second word is the one that's true.
+ */
 export function toast(message: string): void {
+  for (const old of document.querySelectorAll('.toast')) old.remove();
   const el = document.createElement('div');
   el.className = 'toast';
   el.setAttribute('role', 'status');

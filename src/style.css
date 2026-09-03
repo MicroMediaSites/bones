@@ -722,3 +722,20 @@ a {
   font-style: italic;
   letter-spacing: 0.02em;
 }
+
+/* Free cells (no requirement): a sunken well with a dashed rim, and a faint
+   centre dot so the eye reads "empty on purpose" even at small cell sizes. */
+.cell.free {
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.cell.free::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(232, 226, 212, 0.22);
+}

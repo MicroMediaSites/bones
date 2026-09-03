@@ -4,7 +4,9 @@
 // rated puzzle, then GOOD-vs-BAD means so we can see which measurable
 // properties actually separate the boards Matt likes from the ones he doesn't.
 //
-//   bun run scripts/ratings-report.ts [files or dirs...]   # default: ratings/
+//   bun run scripts/ratings-report.ts            # the ratings server
+//   bun run scripts/ratings-report.ts ratings/   # files or dirs instead
+//   bun run scripts/ratings-report.ts https://host  # another server
 //
 // Not machine learning. Labelled data plus arithmetic.
 
@@ -13,7 +15,7 @@ import { join } from 'node:path';
 
 import { countSolutions, ruleLabel } from '../src/engine/index';
 import type { Difficulty, Puzzle, Rule } from '../src/engine/index';
-import { isRating, type Rating } from '../src/ui/ratings';
+import { isRating, RATINGS_URL, type Rating } from '../src/ui/ratings';
 
 /** Stop counting solutions here; past this the exact number stops meaning much. */
 const SOLUTION_CAP = 60;
@@ -140,6 +142,37 @@ export interface Loaded {
   skipped: number;
 }
 
+/** Keep the newest record per id: exports taken at different times overlap. */
+function newestById(records: unknown[], into: Map<string, Rating>): number {
+  let skipped = 0;
+  for (const record of records) {
+    if (!isRating(record)) {
+      skipped++;
+      continue;
+    }
+    const existing = into.get(record.id);
+    if (!existing || existing.at < record.at) into.set(record.id, record);
+  }
+  return skipped;
+}
+
+function sortedByAt(byId: Map<string, Rating>): Rating[] {
+  return [...byId.values()].sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/** `https://host` → its whole corpus. A bare origin gets `/ratings.json`. */
+export async function loadFromUrl(url: string): Promise<Loaded> {
+  const target = url.endsWith('.json') ? url : `${url.replace(/\/$/, '')}/ratings.json`;
+  const response = await fetch(target);
+  if (!response.ok) throw new Error(`${target} returned ${response.status}`);
+  const parsed: unknown = await response.json();
+  if (!Array.isArray(parsed)) throw new Error(`${target} did not return a JSON array`);
+
+  const byId = new Map<string, Rating>();
+  const skipped = newestById(parsed, byId);
+  return { ratings: sortedByAt(byId), skipped };
+}
+
 /**
  * Read every file, keep the records that match the rating shape, and dedupe by
  * id keeping the newest — exports taken at different times overlap.
@@ -160,18 +193,10 @@ export function loadRecords(files: string[]): Loaded {
       console.error(`skip: ${file} is not a JSON array`);
       continue;
     }
-    for (const record of parsed) {
-      if (!isRating(record)) {
-        skipped++;
-        continue;
-      }
-      const existing = byId.get(record.id);
-      if (!existing || existing.at < record.at) byId.set(record.id, record);
-    }
+    skipped += newestById(parsed, byId);
   }
 
-  const ratings = [...byId.values()].sort((a, b) => b.at.localeCompare(a.at));
-  return { ratings, skipped };
+  return { ratings: sortedByAt(byId), skipped };
 }
 
 // ---------------------------------------------------------------- printing
@@ -331,16 +356,45 @@ function report(ratings: Rating[]): void {
   console.log('');
 }
 
-export function main(argv: string[]): number {
-  const paths = argv.length > 0 ? argv : ['ratings'];
-  const files = collectFiles(paths);
-  if (files.length === 0) {
-    console.error(`No .json files found in: ${paths.join(', ')}`);
+function isUrl(arg: string): boolean {
+  return arg.startsWith('http://') || arg.startsWith('https://');
+}
+
+export async function main(argv: string[]): Promise<number> {
+  // With no argument the corpus is wherever the game sends ratings; pass paths
+  // to read exported files instead, or a URL to point at another server.
+  const source = argv.length > 0 ? argv : [process.env['RATINGS_URL'] ?? RATINGS_URL];
+
+  let loaded: Loaded;
+  if (source.every(isUrl)) {
+    const byId = new Map<string, Rating>();
+    let skipped = 0;
+    for (const url of source) {
+      try {
+        const one = await loadFromUrl(url);
+        for (const rating of one.ratings) byId.set(rating.id, rating);
+        skipped += one.skipped;
+      } catch (error) {
+        console.error(`Could not read ${url}: ${(error as Error).message}`);
+        return 1;
+      }
+      console.log(`Read ${url}`);
+    }
+    loaded = { ratings: sortedByAt(byId), skipped };
+  } else if (source.some(isUrl)) {
+    console.error('Give either URLs or file paths, not both.');
     return 1;
+  } else {
+    const files = collectFiles(source);
+    if (files.length === 0) {
+      console.error(`No .json files found in: ${source.join(', ')}`);
+      return 1;
+    }
+    console.log(`Read ${files.length} file(s): ${files.join(', ')}`);
+    loaded = loadRecords(files);
   }
 
-  const { ratings, skipped } = loadRecords(files);
-  console.log(`Read ${files.length} file(s): ${files.join(', ')}`);
+  const { ratings, skipped } = loaded;
   if (skipped > 0) console.error(`Ignored ${skipped} record(s) that did not match the rating shape.`);
   if (ratings.length === 0) {
     console.error('No usable ratings.');
@@ -351,4 +405,4 @@ export function main(argv: string[]): number {
   return 0;
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

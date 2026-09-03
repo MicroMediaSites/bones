@@ -1,8 +1,20 @@
-// The #ratings screen: the corpus so far, plus the three ways to get it out
-// of the browser (copy, download, clear).
+// The #ratings screen: the corpus so far, plus the ways to get it out of the
+// browser (copy, download, clear).
+//
+// The server is the corpus; this screen renders the local mirror first so it
+// paints instantly, then swaps in what the server has. Anything still sitting
+// in the retry queue is shown too, tagged, so a rating never silently vanishes
+// between the phone that made it and the laptop reading it.
 
 import type { Difficulty } from '../engine';
-import { clearRatings, loadRatings, ratingsJson, type Rating } from './ratings';
+import {
+  clearRatings,
+  fetchRatings,
+  loadRatings,
+  ratingsJson,
+  unsentIds,
+  type Rating,
+} from './ratings';
 import { toast } from './ratePanel';
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
@@ -46,7 +58,7 @@ function countsTable(ratings: Rating[]): HTMLElement {
   return table;
 }
 
-function ratingRow(rating: Rating): HTMLElement {
+function ratingRow(rating: Rating, unsent: boolean): HTMLElement {
   const row = document.createElement('li');
   row.className = 'rating-row';
 
@@ -75,6 +87,7 @@ function ratingRow(rating: Rating): HTMLElement {
     rating.solved ? 'solved' : 'unsolved',
     `${rating.regions.length} flagged`,
   ];
+  if (unsent) bits.push('unsent');
   meta.textContent = bits.join(' · ');
 
   row.append(head, meta);
@@ -89,10 +102,27 @@ function ratingRow(rating: Rating): HTMLElement {
 }
 
 /**
+ * The server's records plus any local record the server has not acknowledged,
+ * newest first. Where both sides hold an id, the later `at` wins — the same
+ * rule the server applies on upsert.
+ */
+export function mergeCorpus(remote: Rating[], local: Rating[], unsent: Set<string>): Rating[] {
+  const byId = new Map(remote.map((r) => [r.id, r]));
+  for (const rating of local) {
+    if (!unsent.has(rating.id)) continue;
+    const existing = byId.get(rating.id);
+    if (!existing || existing.at < rating.at) byId.set(rating.id, rating);
+  }
+  return [...byId.values()].sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/**
  * @param rerender re-draw the screen after the corpus changes.
  */
 export function buildRatingsScreen(rerender: () => void): HTMLElement {
-  const ratings = loadRatings();
+  let unsent = unsentIds();
+  let ratings = loadRatings();
+  let json = ratingsJson(ratings);
 
   const screen = document.createElement('div');
   screen.className = 'screen ratings';
@@ -114,6 +144,11 @@ export function buildRatingsScreen(rerender: () => void): HTMLElement {
   const body = document.createElement('div');
   body.className = 'ratings-body';
 
+  const status = document.createElement('p');
+  status.className = 'ratings-warn';
+  status.setAttribute('role', 'status');
+  status.textContent = 'Loading from the server…';
+
   const warn = document.createElement('p');
   warn.className = 'ratings-warn';
   warn.textContent =
@@ -121,7 +156,6 @@ export function buildRatingsScreen(rerender: () => void): HTMLElement {
 
   const actions = document.createElement('div');
   actions.className = 'controls ratings-actions';
-  const json = ratingsJson(ratings);
 
   const copy = button('Copy JSON', 'btn', () => {
     const clipboard = navigator.clipboard;
@@ -144,7 +178,7 @@ export function buildRatingsScreen(rerender: () => void): HTMLElement {
     a.remove();
   });
 
-  const clear = button('Clear all', 'btn btn-danger', () => askClear());
+  const clear = button('Clear local', 'btn btn-danger', () => askClear());
   actions.append(copy, download, clear);
 
   // Inline confirm — never window.confirm; it blocks the page and looks alien
@@ -159,14 +193,19 @@ export function buildRatingsScreen(rerender: () => void): HTMLElement {
     actions.hidden = false;
   });
   const confirmGo = button('Delete', 'btn btn-danger', () => {
-    if (clearRatings()) toast('Cleared');
+    if (clearRatings()) toast('Cleared this browser');
     else toast('Could not clear');
     rerender();
   });
   confirmRow.append(confirmText, confirmCancel, confirmGo);
 
   function askClear(): void {
-    confirmText.textContent = `Delete ${ratings.length} rating${ratings.length === 1 ? '' : 's'}?`;
+    const local = loadRatings().length;
+    const queued = unsent.size;
+    confirmText.textContent =
+      queued > 0
+        ? `Delete ${local} local record(s), including ${queued} not yet on the server?`
+        : `Delete ${local} local record(s)? The server keeps its copy.`;
     actions.hidden = true;
     confirmRow.hidden = false;
   }
@@ -183,22 +222,48 @@ export function buildRatingsScreen(rerender: () => void): HTMLElement {
     fallback.select();
   }
 
-  body.append(warn, countsTable(ratings), actions, confirmRow, fallback);
+  // Reassigned on every paint: the replaced node is detached, so the next
+  // paint has to hold the one that is actually in the document.
+  let counts = countsTable(ratings);
+  const list = document.createElement('ul');
+  list.className = 'rating-list';
 
-  if (ratings.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'ratings-empty';
-    empty.textContent = 'No ratings yet. Open a puzzle and tap Rate.';
-    body.appendChild(empty);
-    clear.disabled = true;
-    copy.disabled = true;
-    download.disabled = true;
-  } else {
-    const list = document.createElement('ul');
-    list.className = 'rating-list';
-    for (const rating of ratings) list.appendChild(ratingRow(rating));
-    body.appendChild(list);
+  const empty = document.createElement('p');
+  empty.className = 'ratings-empty';
+  empty.textContent = 'No ratings yet. Open a puzzle and tap Rate.';
+
+  function paint(): void {
+    json = ratingsJson(ratings);
+    fallback.value = json;
+    const next = countsTable(ratings);
+    counts.replaceWith(next);
+    counts = next;
+    list.replaceChildren(...ratings.map((r) => ratingRow(r, unsent.has(r.id))));
+    const none = ratings.length === 0;
+    empty.hidden = !none;
+    list.hidden = none;
+    copy.disabled = none;
+    download.disabled = none;
+    clear.disabled = loadRatings().length === 0;
   }
+
+  body.append(status, warn, counts, actions, confirmRow, fallback, empty, list);
+  paint();
+
+  void fetchRatings().then(
+    (remote) => {
+      unsent = unsentIds();
+      ratings = mergeCorpus(remote, loadRatings(), unsent);
+      status.textContent =
+        unsent.size === 0
+          ? `${remote.length} rating${remote.length === 1 ? '' : 's'} on the server.`
+          : `${remote.length} on the server · ${unsent.size} still waiting to send.`;
+      paint();
+    },
+    () => {
+      status.textContent = 'Server unreachable — showing this browser’s copy only.';
+    },
+  );
 
   screen.append(bar, body);
   return screen;

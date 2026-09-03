@@ -59,8 +59,10 @@ describe.each(DIFFICULTIES)('generate(%s)', (difficulty) => {
         // No single-cell regions: a lone cell with a rule is a revealed pip,
         // and a board of revealed pips is a lookup, not a puzzle. Carving may
         // run a region past the cap rather than leave a cell alone.
-        expect(region.cells.length).toBeGreaterThanOrEqual(2);
-        expect(region.cells.length).toBeLessThanOrEqual(preset.maxRegion + 2);
+        // The only single-cell regions are free cells (no rule): a lone cell
+        // with a rule would be a revealed pip.
+        if (region.cells.length === 1) expect(region.rule.kind).toBe('none');
+        expect(region.cells.length).toBeLessThanOrEqual(preset.maxRegion + 3);
         for (const cell of region.cells) {
           const key = `${cell.r},${cell.c}`;
           expect(owned.has(key)).toBe(false);
@@ -87,6 +89,23 @@ describe.each(DIFFICULTIES)('generate(%s)', (difficulty) => {
   });
 });
 
+describe('free cells', () => {
+  test.each(DIFFICULTIES)('%s boards carry the preset number of free cells and no ≠', (difficulty) => {
+    const [, max] = PRESETS[difficulty].freeCells;
+    let total = 0;
+    for (let seed = 0; seed < 15; seed++) {
+      const puzzle = generate(difficulty, 300 + seed);
+      const free = puzzle.regions.filter((r) => r.cells.length === 1 && r.rule.kind === 'none').length;
+      // Free cells are detached from regions of three or more cells, so a
+      // board of pairs can end up with none; on average there is at least one.
+      expect(free).toBeLessThanOrEqual(max);
+      expect(puzzle.regions.some((r) => r.rule.kind === 'neq')).toBe(false);
+      total += free;
+    }
+    expect(total / 15).toBeGreaterThanOrEqual(1);
+  }, 120_000);
+});
+
 describe('rule mix', () => {
   test('easy uses no lt/gt and at most one free region', () => {
     for (let seed = 0; seed < 20; seed++) {
@@ -94,7 +113,9 @@ describe('rule mix', () => {
       const kinds = puzzle.regions.map((r) => r.rule.kind);
       expect(kinds).not.toContain('lt');
       expect(kinds).not.toContain('gt');
-      expect(kinds.filter((k) => k === 'none').length).toBeLessThanOrEqual(PRESETS.easy.maxNone);
+      // Free cells are single-cell `none` regions and are budgeted separately.
+      const freeRegions = puzzle.regions.filter((r) => r.rule.kind === 'none' && r.cells.length > 1).length;
+      expect(freeRegions).toBeLessThanOrEqual(PRESETS.easy.maxNone);
     }
   });
 });

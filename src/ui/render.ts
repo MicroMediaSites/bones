@@ -63,23 +63,32 @@ export function renderBoard(
       const region = regionAt.get(cellKey(r, c));
       const skin = REGION_SKINS[region ? (skinOf.get(region.id) ?? 0) : 0] ?? REGION_SKINS[0];
 
+      // A region with no rule is a "no requirement" square: drawn bare, with a
+      // faint dashed edge, so it reads as free space rather than a clue.
+      const free = region?.rule.kind === 'none';
       const cell = document.createElement('div');
-      cell.className = 'cell';
+      cell.className = free ? 'cell free' : 'cell';
       cell.style.gridArea = `${r + 1} / ${c + 1}`;
-      cell.style.background = skin.fill;
+      // Free cells sit "below" the board: a darker well with a clear dashed
+      // rim, so where a free cell ends is never in doubt next to a region.
+      cell.style.background = free ? 'rgba(0, 0, 0, 0.26)' : skin.fill;
       for (const [side, dr, dc] of SIDES) {
         const neighbour = regionAt.get(cellKey(r + dr, c + dc));
         const perimeter = !region || !neighbour || neighbour.id !== region.id;
         cell.style.setProperty(
           `border-${side}`,
-          perimeter ? `2px solid ${skin.edge}` : '1px solid rgba(255,255,255,0.05)',
+          free
+            ? '2px dashed rgba(232,226,212,0.45)'
+            : perimeter
+              ? `2px solid ${skin.edge}`
+              : '1px solid rgba(255,255,255,0.05)',
         );
       }
-      if (region) {
+      if (region && !free) {
         const state = status.regions[region.id];
         if (state === 'ok' || state === 'bad') cell.classList.add(state);
-        if (flagged.has(region.id)) cell.classList.add('flagged');
       }
+      if (region && flagged.has(region.id)) cell.classList.add('flagged');
       const label = tagAt.get(cellKey(r, c));
       if (label !== undefined) {
         const tag = document.createElement('span');
