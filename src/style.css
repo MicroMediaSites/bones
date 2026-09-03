@@ -681,3 +681,14 @@ body {
   color: rgba(232, 226, 212, 0.8);
   overflow-wrap: anywhere;
 }
+
+/* Shown while the generator settles a board (hard can take a few seconds). */
+.dealing {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--ink-dim, #b9b3a6);
+  font-style: italic;
+  letter-spacing: 0.02em;
+}

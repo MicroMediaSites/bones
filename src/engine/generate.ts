@@ -413,7 +413,6 @@ function valuesOf(shape: Shape, cells: Cell[]): number[] {
   return cells.map((cell) => (shape.values[cell.r] as number[])[cell.c] as number);
 }
 
-/** Split a region's cells into two connected halves, or null if it won't split. */
 /** Split a region into two connected parts of at least `MIN_PART` cells each. */
 const MIN_PART = 2;
 
