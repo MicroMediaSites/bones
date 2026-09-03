@@ -262,6 +262,10 @@ function renderGame(): void {
 
   const screen = document.createElement('div');
   screen.className = rate ? 'screen game rating' : 'screen game';
+  // The hand wraps at four tiles a row and never scrolls: a tile the player
+  // cannot see is a puzzle the player cannot solve. Reserve the full-hand
+  // height for the whole game so the board doesn't jump as tiles leave.
+  screen.style.setProperty('--tray-rows', String(Math.ceil(game.puzzle.dominoes.length / 4)));
 
   const topline = document.createElement('div');
   topline.className = 'topline';
