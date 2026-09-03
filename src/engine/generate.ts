@@ -26,6 +26,8 @@ export interface Preset {
   pairShare: number;
   /** Chance each dealt tile is chosen to sit next to equal pips (see dealHand). */
   clusterBias: number;
+  /** Free cells (no requirement) per board, min and max. They are never given a rule. */
+  freeCells: [number, number];
   /** Whole builds tried per seed; the tightest wins. */
   rolls: number;
   /** A build with this many solutions or fewer is accepted without another roll. */
@@ -48,6 +50,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     followEqual: 0.5,
     pairShare: 0.6,
     clusterBias: 0.6,
+    freeCells: [1, 2],
     rolls: 3,
     targetSolutions: 2,
     weights: { sum: 10, eq: 14, neq: 0, lt: 0, gt: 0, none: 2 },
@@ -65,9 +68,10 @@ export const PRESETS: Record<Difficulty, Preset> = {
     followEqual: 0.8,
     pairShare: 0.75,
     clusterBias: 0.85,
+    freeCells: [1, 3],
     rolls: 3,
     targetSolutions: 3,
-    weights: { sum: 10, eq: 14, neq: 5, lt: 2, gt: 2, none: 3 },
+    weights: { sum: 10, eq: 14, neq: 0, lt: 2, gt: 2, none: 3 },
   },
   hard: {
     minDominoes: 9,
@@ -82,9 +86,10 @@ export const PRESETS: Record<Difficulty, Preset> = {
     followEqual: 0.9,
     pairShare: 0.7,
     clusterBias: 0.9,
+    freeCells: [2, 4],
     rolls: 5,
     targetSolutions: 3,
-    weights: { sum: 10, eq: 16, neq: 5, lt: 2, gt: 2, none: 3 },
+    weights: { sum: 10, eq: 16, neq: 0, lt: 2, gt: 2, none: 3 },
   },
 };
 
@@ -378,6 +383,28 @@ function carveRegions(rng: Rng, shape: Shape, preset: Preset): Cell[][] {
     (groups[target] as Cell[]).push(seed);
     owner.set(key(seed), target);
   }
+
+  // Free cells: single cells with no rule (Pips has these). Detach them from
+  // regions of three or more cells so the rest stays a real region. Spread
+  // them out — never two adjacent, never both halves of one tile — so they
+  // read as gaps in the clues rather than a blank patch.
+  const [minFree, maxFree] = preset.freeCells;
+  const wanted = minFree + rng.int(maxFree - minFree + 1);
+  const freeKeys = new Set<string>();
+  for (const group of rng.shuffle(groups.map((_, i) => i)).map((i) => groups[i] as Cell[])) {
+    if (freeKeys.size >= wanted) break;
+    if (group.length < 3) continue;
+    for (const cell of rng.shuffle([...group])) {
+      const rest = group.filter((c) => c !== cell);
+      if (!isConnected(rest)) continue;
+      if (neighbours(cell).some((n) => freeKeys.has(key(n)))) continue;
+      if (freeKeys.has(partnerOf(cell))) continue;
+      group.splice(group.indexOf(cell), 1);
+      freeKeys.add(key(cell));
+      groups.push([cell]);
+      break;
+    }
+  }
   return groups;
 }
 
@@ -394,9 +421,9 @@ function chooseRule(rng: Rng, values: number[], preset: Preset, noneBudget: numb
   };
 
   if (values.length === 1) {
-    // A single-cell `sum` reveals the pip. Carving keeps these rare.
-    offer({ kind: 'sum', n: sum }, w.sum);
-    offer({ kind: 'none' }, noneBudget > 0 ? w.none : 0);
+    // A lone cell is a free cell by construction (see carveRegions); a rule
+    // on it would just reveal the pip.
+    return { kind: 'none' };
   } else {
     offer({ kind: 'sum', n: sum }, w.sum);
     if (values.every((v) => v === values[0])) offer({ kind: 'eq' }, w.eq);
@@ -488,13 +515,15 @@ interface Move {
 function moves(rng: Rng, puzzle: Puzzle, shape: Shape): Move[] {
   const out: Move[] = [];
   for (const region of puzzle.regions) {
+    // A free cell stays free: it is a deliberate "no requirement" square, not
+    // an unspent clue. (Pips has these; they are part of the look.)
+    if (region.cells.length === 1) continue;
     const values = valuesOf(shape, region.cells);
     const sum = values.reduce((a, b) => a + b, 0);
     const before = region.rule;
     const alternatives: Rule[] = [];
     if (before.kind !== 'sum') alternatives.push({ kind: 'sum', n: sum });
     if (before.kind !== 'eq' && values.length > 1 && values.every((v) => v === values[0])) alternatives.push({ kind: 'eq' });
-    if (before.kind !== 'neq' && values.length > 1 && new Set(values).size === values.length) alternatives.push({ kind: 'neq' });
     for (const after of alternatives) {
       out.push({
         apply: () => {
@@ -555,6 +584,7 @@ function rekey(rule: Rule, values: number[]): Rule {
  */
 function shiftMoves(puzzle: Puzzle, shape: Shape, from: Region): Move[] {
   if (from.cells.length <= MIN_PART) return [];
+  const isFree = (r: Region): boolean => r.cells.length === 1 && r.rule.kind === 'none';
   const out: Move[] = [];
   const owner = new Map<string, Region>();
   for (const region of puzzle.regions) for (const cell of region.cells) owner.set(`${cell.r},${cell.c}`, region);
@@ -566,7 +596,7 @@ function shiftMoves(puzzle: Puzzle, shape: Shape, from: Region): Move[] {
     const seen = new Set<Region>();
     for (let k = 0; k < 4; k++) {
       const to = owner.get(`${cell.r + (DR[k] as number)},${cell.c + (DC[k] as number)}`);
-      if (!to || to === from || seen.has(to) || to.cells.length >= cap) continue;
+      if (!to || to === from || seen.has(to) || to.cells.length >= cap || isFree(to)) continue;
       if (owner.get(shape.partner.get(`${cell.r},${cell.c}`) as string) === to) continue;
       seen.add(to);
       const fromBefore = { cells: from.cells, rule: from.rule };
