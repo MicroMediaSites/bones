@@ -9,10 +9,12 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p server",
     "test": "bun test",
-    "ratings:report": "bun run scripts/ratings-report.ts"
+    "ratings:report": "bun run scripts/ratings-report.ts",
+    "playtest:live": "bun run scripts/playtest-live.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
+    "playwright": "1",
     "typescript": "^5.9.0",
     "vite": "^7.0.0"
   }
