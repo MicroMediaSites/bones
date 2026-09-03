@@ -46,7 +46,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     carveAttempts: 10,
     tightenAttempts: 5,
     followEqual: 0.5,
-    pairShare: 0.6,
+    pairShare: 0.5,
     clusterBias: 0.6,
     freeCells: [1, 2],
     rolls: 3,

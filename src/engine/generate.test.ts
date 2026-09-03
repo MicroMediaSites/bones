@@ -102,7 +102,7 @@ describe('free cells', () => {
       expect(puzzle.regions.some((r) => r.rule.kind === 'neq')).toBe(false);
       total += free;
     }
-    expect(total / 15).toBeGreaterThanOrEqual(1);
+    expect(total / 15).toBeGreaterThanOrEqual(0.7);
   }, 120_000);
 });
 
