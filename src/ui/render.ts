@@ -33,6 +33,8 @@ export function renderBoard(
   game: Game,
   status: Validation,
   preview: Placement | null,
+  /** Region ids the rater has flagged; every cell of each gets a marker. */
+  flagged: ReadonlySet<number> = new Set(),
 ): HTMLElement {
   const { puzzle } = game;
   const grid = document.createElement('div');
@@ -76,6 +78,7 @@ export function renderBoard(
       if (region) {
         const state = status.regions[region.id];
         if (state === 'ok' || state === 'bad') cell.classList.add(state);
+        if (flagged.has(region.id)) cell.classList.add('flagged');
       }
       const label = tagAt.get(cellKey(r, c));
       if (label !== undefined) {

@@ -4,6 +4,9 @@ import { generate, validate } from '../engine';
 import type { Cell, Difficulty, Placement, Puzzle } from '../engine';
 import { devPuzzle } from './devFixtures';
 import { tileEl } from './pips';
+import { createRatePanel, toast, type RatePanel } from './ratePanel';
+import { loadRatings, ratingId, saveRating, type Rating, type Verdict } from './ratings';
+import { buildRatingsScreen } from './ratingsPage';
 import { renderBoard, renderTray } from './render';
 import {
   anchorOf,
@@ -39,12 +42,35 @@ interface Drag {
   target: [Cell, Cell] | null;
 }
 
+/** An open rating panel. Non-null means the game screen is in rating mode. */
+interface RateSession {
+  verdict: Verdict | null;
+  flagged: Set<number>;
+  panel: RatePanel;
+}
+
+/** A board tap taken while rating, resolved on pointerup if it wasn't a drag. */
+interface RegionTap {
+  pointerId: number;
+  region: number;
+  x: number;
+  y: number;
+}
+
 let root: HTMLElement;
 let game: Game | null = null;
 let boardEl: HTMLElement | null = null;
 let timerEl: HTMLElement | null = null;
 let timerId: ReturnType<typeof setInterval> | null = null;
 let drag: Drag | null = null;
+let rate: RateSession | null = null;
+let regionTap: RegionTap | null = null;
+
+const NO_FLAGS: ReadonlySet<number> = new Set<number>();
+
+function flaggedRegions(): ReadonlySet<number> {
+  return rate ? rate.flagged : NO_FLAGS;
+}
 
 export function mount(el: HTMLElement): void {
   root = el;
@@ -77,9 +103,21 @@ function route(): void {
     if (game?.puzzle !== devPuzzle) openGame(devPuzzle);
     return;
   }
+  if (location.hash === '#ratings') {
+    leaveGame();
+    renderRatings();
+    return;
+  }
+  leaveGame();
+  renderHome();
+}
+
+/** Drop everything the game screen owns, so another screen starts clean. */
+function leaveGame(): void {
   stopTimer();
   game = null;
-  renderHome();
+  rate = null;
+  regionTap = null;
 }
 
 function setHash(hash: string): void {
@@ -95,14 +133,15 @@ function startPuzzle(difficulty: Difficulty): void {
 }
 
 function openGame(puzzle: Puzzle): void {
+  rate = null;
+  regionTap = null;
   game = newGame(puzzle);
   startTimer();
   renderGame();
 }
 
 function exitGame(): void {
-  stopTimer();
-  game = null;
+  leaveGame();
   setHash('');
   renderHome();
 }
@@ -179,10 +218,21 @@ function renderHome(): void {
     legend.append(key, value);
   }
 
-  screen.append(title, tagline, picker, legend);
+  const ratingsLink = document.createElement('a');
+  ratingsLink.className = 'ratings-link';
+  ratingsLink.href = '#ratings';
+  ratingsLink.textContent = 'Ratings';
+
+  screen.append(title, tagline, picker, legend, ratingsLink);
   boardEl = null;
   timerEl = null;
   root.replaceChildren(screen);
+}
+
+function renderRatings(): void {
+  boardEl = null;
+  timerEl = null;
+  root.replaceChildren(buildRatingsScreen(renderRatings));
 }
 
 function renderGame(): void {
@@ -191,7 +241,7 @@ function renderGame(): void {
   if (status.solved) stopTimer();
 
   const screen = document.createElement('div');
-  screen.className = 'screen game';
+  screen.className = rate ? 'screen game rating' : 'screen game';
 
   const topline = document.createElement('div');
   topline.className = 'topline';
@@ -204,7 +254,9 @@ function renderGame(): void {
   timerEl = document.createElement('span');
   timerEl.className = 'timer';
   timerEl.textContent = elapsed(game);
-  topline.append(mark, chip, timerEl);
+  const rateBtn = button(rate ? 'Rating…' : 'Rate', 'btn btn-rate', openRatePanel);
+  rateBtn.disabled = rate !== null;
+  topline.append(mark, chip, timerEl, rateBtn);
 
   const controls = document.createElement('div');
   controls.className = 'controls';
@@ -220,14 +272,18 @@ function renderGame(): void {
 
   const wrap = document.createElement('div');
   wrap.className = 'boardwrap';
-  boardEl = renderBoard(game, status, null);
+  boardEl = renderBoard(game, status, null, flaggedRegions());
   wrap.appendChild(boardEl);
 
   const trayZone = document.createElement('div');
   trayZone.className = 'trayzone';
   trayZone.appendChild(status.solved ? solvedPanel(game) : renderTray(game));
 
-  screen.append(bar, wrap, trayZone);
+  screen.append(bar, wrap);
+  // The panel element outlives a re-render on purpose: rebuilding it would
+  // throw away whatever is half-typed in the note field.
+  if (rate) screen.append(rate.panel.el);
+  screen.append(trayZone);
   root.replaceChildren(screen);
 }
 
@@ -262,15 +318,105 @@ function refreshBoard(): void {
   if (!game || !boardEl) return;
   const preview: Placement | null =
     drag?.target ? { domino: drag.tile, cells: drag.target } : null;
-  const next = renderBoard(game, validate(game.puzzle, game.board), preview);
+  const next = renderBoard(game, validate(game.puzzle, game.board), preview, flaggedRegions());
   boardEl.replaceWith(next);
   boardEl = next;
+}
+
+// ---------------------------------------------------------------- rating
+
+function openRatePanel(): void {
+  if (!game || rate) return;
+  const previous = loadRatings().find((r) => r.id === ratingId(game!.puzzle));
+  const panel = createRatePanel(
+    {
+      verdict: previous?.verdict ?? null,
+      note: previous?.note ?? '',
+      flagged: previous?.regions.length ?? 0,
+    },
+    { onVerdict: pickVerdict, onSave: saveCurrentRating, onCancel: closeRatePanel },
+  );
+  rate = {
+    verdict: previous?.verdict ?? null,
+    flagged: new Set(previous?.regions ?? []),
+    panel,
+  };
+  renderGame();
+}
+
+function closeRatePanel(): void {
+  rate = null;
+  regionTap = null;
+  renderGame();
+}
+
+function pickVerdict(verdict: Verdict): void {
+  if (!rate) return;
+  rate.verdict = verdict;
+  rate.panel.setVerdict(verdict);
+}
+
+function toggleFlag(regionId: number): void {
+  if (!rate) return;
+  if (!rate.flagged.delete(regionId)) rate.flagged.add(regionId);
+  rate.panel.setFlagCount(rate.flagged.size);
+  refreshBoard();
+}
+
+function saveCurrentRating(): void {
+  if (!game || !rate) return;
+  if (!rate.verdict) {
+    toast('Pick Good or Bad');
+    return;
+  }
+  const record: Rating = {
+    id: ratingId(game.puzzle),
+    at: new Date().toISOString(),
+    verdict: rate.verdict,
+    note: rate.panel.note(),
+    regions: [...rate.flagged].sort((a, b) => a - b),
+    solved: validate(game.puzzle, game.board).solved,
+    puzzle: game.puzzle,
+  };
+  const stored = saveRating(record);
+  rate = null;
+  regionTap = null;
+  renderGame();
+  toast(stored ? 'Saved' : 'Could not save');
+}
+
+/**
+ * The id of the region under a viewport point, or null if not on the board.
+ * Cells are uniform and the grid has no gap, so a plain divide locates one —
+ * the same arithmetic `snapTarget` uses.
+ */
+function regionAtPoint(g: Game, x: number, y: number): number | null {
+  const rect = boardRect();
+  if (!rect || !overBoard(x, y)) return null;
+  const c = Math.floor((x - rect.left) / (rect.width / g.puzzle.cols));
+  const r = Math.floor((y - rect.top) / (rect.height / g.puzzle.rows));
+  for (const region of g.puzzle.regions) {
+    if (region.cells.some((cell) => cell.r === r && cell.c === c)) return region.id;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- dragging
 
 function onPointerDown(e: PointerEvent): void {
   if (!game || drag) return;
+
+  // While rating, a tap anywhere on the board flags that cell's region. It is
+  // only resolved on pointerup, so dragging a placed tile still works.
+  if (rate && !regionTap) {
+    const region = regionAtPoint(game, e.clientX, e.clientY);
+    if (region !== null) {
+      regionTap = { pointerId: e.pointerId, region, x: e.clientX, y: e.clientY };
+      root.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }
+  }
+
   const target = e.target instanceof Element ? e.target.closest<HTMLElement>('[data-tile]') : null;
   if (!target) return;
   const tile = Number(target.dataset.tile);
@@ -324,6 +470,22 @@ function onPointerMove(e: PointerEvent): void {
 }
 
 function onPointerUp(e: PointerEvent): void {
+  if (regionTap && e.pointerId === regionTap.pointerId) {
+    const tap = regionTap;
+    regionTap = null;
+    const moved =
+      drag?.moved === true || Math.hypot(e.clientX - tap.x, e.clientY - tap.y) >= TAP_SLOP_PX;
+    if (!moved) {
+      // A tap, not a drag: flag the region rather than rotating the tile.
+      const pending = drag;
+      drag = null;
+      pending?.ghost?.remove();
+      if (root.hasPointerCapture(e.pointerId)) root.releasePointerCapture(e.pointerId);
+      toggleFlag(tap.region);
+      return;
+    }
+  }
+
   if (!drag || e.pointerId !== drag.pointerId) return;
   const d = drag;
   drag = null;
