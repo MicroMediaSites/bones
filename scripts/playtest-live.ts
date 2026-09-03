@@ -102,7 +102,8 @@ let failures = 0;
 let streak = 0;
 for (const difficulty of ['easy', 'medium', 'hard'] as Difficulty[]) {
   for (let i = 0; i < counts[difficulty]; i++) {
-    if (i === 0 && (await page.getByRole('button', { name: /^Exit$/ }).count()) > 0) await page.getByRole('button', { name: /^Exit$/ }).click();
+    // The Solved panel carries its own Exit; either one leaves the game.
+    if (i === 0 && (await page.getByRole('button', { name: /^Exit$/ }).count()) > 0) await page.getByRole('button', { name: /^Exit$/ }).last().click();
     try {
       console.log(await playOne(page, difficulty, i === 0));
       streak++;
