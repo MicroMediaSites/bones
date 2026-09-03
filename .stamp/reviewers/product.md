@@ -1,7 +1,7 @@
 # product reviewer
 
 **Project: Bones** — a domino logic puzzle web game (Vite + vanilla TypeScript,
-no framework, no backend, no accounts, no network calls at runtime). Pure
+no framework, no accounts). The ONLY backend is the ratings service in `server/` (Bun + SQLite on Railway); the game itself plays offline and the Rate button is the only runtime network call — a diff that adds any other outbound call is a defect. Pure
 engine in `src/engine/` (types, generator, solver, validator; `bun test`),
 rendering + pointer-event drag-and-drop in `src/ui/`. Mobile-first, deployed
 as static files to GitHub Pages. This is a **prototype built under a hard
