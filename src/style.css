@@ -1,0 +1,393 @@
+/* Bones — a dark felt tabletop. One theme, no light mode. */
+
+:root {
+  --felt: #16241f;
+  --felt-deep: #0e1815;
+  --chalk: #e8e2d4;
+  --brass: #c79a4e;
+  --line: rgba(232, 226, 212, 0.15);
+  --bone-face: linear-gradient(158deg, #f7f0e2 0%, #e7ddc7 55%, #d8ccb2 100%);
+  --bone-edge: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -2px 2px rgba(0, 0, 0, 0.18);
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: radial-gradient(125% 95% at 50% 0%, #203630 0%, var(--felt) 45%, var(--felt-deep) 100%);
+  color: var(--chalk);
+  font-family: var(--sans);
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  height: 100dvh;
+}
+
+.screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 12px)
+    calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 12px);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.wordmark {
+  font-family: var(--serif);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--brass);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------ buttons */
+
+.btn {
+  font: inherit;
+  font-size: 15px;
+  color: var(--chalk);
+  background: rgba(232, 226, 212, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  min-height: 44px;
+  padding: 0 14px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+
+.btn:active {
+  background: rgba(232, 226, 212, 0.15);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+.btn-lg {
+  min-height: 62px;
+  font-family: var(--serif);
+  font-size: 20px;
+  letter-spacing: 0.1em;
+  border-color: rgba(199, 154, 78, 0.4);
+  background: rgba(199, 154, 78, 0.07);
+}
+
+/* ------------------------------------------------------------ home */
+
+.home {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.home .wordmark {
+  font-size: clamp(46px, 17vw, 78px);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+.tagline {
+  max-width: 32ch;
+  margin: 10px 0 26px;
+  color: rgba(232, 226, 212, 0.68);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.difficulties {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(330px, 84vw);
+}
+
+.legend {
+  margin-top: 30px;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 5px 14px;
+  align-items: baseline;
+  font-size: 12.5px;
+  color: rgba(232, 226, 212, 0.5);
+  text-align: left;
+}
+
+.legend b {
+  font-family: var(--serif);
+  font-weight: 600;
+  color: var(--brass);
+  justify-self: end;
+}
+
+/* ------------------------------------------------------------ game chrome */
+
+.topbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.topline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topline .wordmark {
+  font-size: 21px;
+}
+
+.chip {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: rgba(232, 226, 212, 0.75);
+}
+
+.timer {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: rgba(232, 226, 212, 0.45);
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+}
+
+.controls .btn {
+  flex: 1;
+  padding: 0 6px;
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------ board */
+
+.boardwrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.board {
+  --cell: min(
+    calc((100vw - 30px) / var(--cols)),
+    calc((100dvh - 252px) / var(--rows)),
+    88px
+  );
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--cell));
+  grid-template-rows: repeat(var(--rows), var(--cell));
+  touch-action: none;
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
+}
+
+.cell {
+  position: relative;
+}
+
+.cell.ok {
+  background-image: linear-gradient(rgba(124, 172, 118, 0.34), rgba(124, 172, 118, 0.34));
+}
+
+.cell.bad {
+  background-image: linear-gradient(rgba(188, 92, 74, 0.38), rgba(188, 92, 74, 0.38));
+}
+
+/* A small chalk plate, so the label stays readable once a bone tile covers
+   the cell it sits on. */
+.tag {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 3;
+  pointer-events: none;
+  padding: 0 4px 1px;
+  border-radius: 2px;
+  background: rgba(10, 19, 16, 0.82);
+  font-family: var(--serif);
+  font-size: clamp(11px, calc(var(--cell) * 0.3), 19px);
+  line-height: 1.25;
+  color: rgba(255, 253, 247, 0.95);
+}
+
+/* ------------------------------------------------------------ tiles */
+
+.tile {
+  display: flex;
+  border-radius: 3px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.tile-h {
+  flex-direction: row;
+}
+
+.tile-v {
+  flex-direction: column;
+}
+
+.tile .half {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tile-h .half + .half {
+  border-left: 1px solid rgba(23, 20, 15, 0.32);
+}
+
+.tile-v .half + .half {
+  border-top: 1px solid rgba(23, 20, 15, 0.32);
+}
+
+.face {
+  display: block;
+  width: 76%;
+  height: 76%;
+}
+
+.pip {
+  fill: #191510;
+}
+
+.tile.placed,
+.tile.preview {
+  z-index: 2;
+  /* Inset so the region wash and its ok/bad tint still read around a tile. */
+  margin: 4px;
+}
+
+.tile.placed {
+  background: var(--bone-face);
+  box-shadow: var(--bone-edge), 0 2px 5px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+
+.tile.preview {
+  pointer-events: none;
+  background: rgba(238, 229, 212, 0.26);
+  box-shadow: inset 0 0 0 2px rgba(238, 229, 212, 0.8);
+}
+
+.tile.preview .pip {
+  fill: rgba(25, 21, 16, 0.4);
+}
+
+.tile.ghost {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  opacity: 0.92;
+  background: var(--bone-face);
+  box-shadow: var(--bone-edge), 0 12px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* ------------------------------------------------------------ tray */
+
+.trayzone {
+  flex: 0 0 auto;
+  margin-top: 10px;
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+}
+
+.tray {
+  width: 100%;
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  /* Horizontal panning still scrolls the tray; the tiles themselves take the
+     drag (touch-action: none on .tile). */
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+
+.tray::-webkit-scrollbar {
+  display: none;
+}
+
+.tile.in-hand {
+  flex: 0 0 auto;
+  background: var(--bone-face);
+  box-shadow: var(--bone-edge), 0 3px 7px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+
+.tile-h.in-hand {
+  width: 88px;
+  height: 44px;
+}
+
+.tile-v.in-hand {
+  width: 44px;
+  height: 88px;
+}
+
+.tray-empty {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(232, 226, 212, 0.4);
+}
+
+/* ------------------------------------------------------------ solved */
+
+.solved {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(199, 154, 78, 0.5);
+  border-radius: 3px;
+  background: rgba(199, 154, 78, 0.1);
+}
+
+.solved h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 23px;
+  letter-spacing: 0.08em;
+  color: var(--brass);
+}
+
+.solved-time {
+  font-size: 13px;
+  color: rgba(232, 226, 212, 0.6);
+  margin-right: auto;
+}
