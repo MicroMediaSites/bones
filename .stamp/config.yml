@@ -4,6 +4,13 @@ branches:
       - security
       - standards
       - product
+    # Run against the merged tree at `stamp merge` time; any non-zero rolls
+    # the merge back. Both are fast (single Vite app, bun test on src/engine).
+    required_checks:
+      - name: typecheck
+        run: bun run typecheck
+      - name: test
+        run: bun test
 reviewers:
   security:
     prompt: .stamp/reviewers/security.md
