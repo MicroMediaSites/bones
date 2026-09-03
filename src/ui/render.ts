@@ -13,13 +13,15 @@ import {
 } from './state';
 
 /** Muted tabletop palette: region wash + the line drawn around its perimeter. */
+// Region colours sit OVER the board slots (see .cell in style.css), so they
+// need real opacity to read as sections; the hues stay muted.
 const REGION_SKINS = [
-  { fill: 'rgba(163,133,66,0.20)', edge: 'rgba(198,166,94,0.70)' }, // ochre
-  { fill: 'rgba(94,124,148,0.20)', edge: 'rgba(132,166,192,0.66)' }, // slate
-  { fill: 'rgba(158,88,62,0.20)', edge: 'rgba(196,120,90,0.66)' }, // rust
-  { fill: 'rgba(94,130,88,0.20)', edge: 'rgba(128,172,120,0.66)' }, // moss
-  { fill: 'rgba(126,102,130,0.20)', edge: 'rgba(166,138,170,0.62)' }, // plum
-  { fill: 'rgba(150,136,104,0.18)', edge: 'rgba(186,172,136,0.62)' }, // sand
+  { fill: 'rgba(178,142,70,0.42)', edge: 'rgba(214,180,104,0.92)' }, // ochre
+  { fill: 'rgba(96,132,160,0.42)', edge: 'rgba(138,178,206,0.92)' }, // slate
+  { fill: 'rgba(170,94,66,0.42)', edge: 'rgba(212,132,102,0.92)' }, // rust
+  { fill: 'rgba(98,140,94,0.42)', edge: 'rgba(136,184,128,0.92)' }, // moss
+  { fill: 'rgba(140,108,146,0.42)', edge: 'rgba(184,150,190,0.92)' }, // plum
+  { fill: 'rgba(164,148,112,0.40)', edge: 'rgba(202,186,150,0.92)' }, // sand
 ] as const;
 
 const SIDES = [
@@ -44,7 +46,7 @@ export function renderBoard(
 
   const regionAt = new Map<string, Region>();
   const skinOf = new Map<number, number>();
-  const tagAt = new Map<string, string>();
+  const tagAt = new Map<string, { label: string; skin: (typeof REGION_SKINS)[number] }>();
   puzzle.regions.forEach((region, i) => {
     skinOf.set(region.id, i % REGION_SKINS.length);
     for (const cell of region.cells) regionAt.set(cellKey(cell.r, cell.c), region);
@@ -54,7 +56,7 @@ export function renderBoard(
     for (const cell of region.cells) {
       if (cell.r < corner.r || (cell.r === corner.r && cell.c < corner.c)) corner = cell;
     }
-    tagAt.set(cellKey(corner.r, corner.c), label);
+    tagAt.set(cellKey(corner.r, corner.c), { label, skin: REGION_SKINS[i % REGION_SKINS.length] ?? REGION_SKINS[0] });
   });
 
   for (let r = 0; r < puzzle.rows; r++) {
@@ -69,31 +71,43 @@ export function renderBoard(
       const cell = document.createElement('div');
       cell.className = free ? 'cell free' : 'cell';
       cell.style.gridArea = `${r + 1} / ${c + 1}`;
-      // Free cells sit "below" the board: a darker well with a clear dashed
-      // rim, so where a free cell ends is never in doubt next to a region.
-      cell.style.background = free ? 'rgba(0, 0, 0, 0.26)' : skin.fill;
-      for (const [side, dr, dc] of SIDES) {
-        const neighbour = regionAt.get(cellKey(r + dr, c + dc));
-        const perimeter = !region || !neighbour || neighbour.id !== region.id;
-        cell.style.setProperty(
-          `border-${side}`,
-          free
-            ? '2px dashed rgba(232,226,212,0.45)'
-            : perimeter
-              ? `2px solid ${skin.edge}`
-              : '1px solid rgba(255,255,255,0.05)',
-        );
+      // Every playable cell is a slot on the board (style.css paints the slot).
+      // A region lays a coloured "mat" over its slots: inset from the region's
+      // outer edges so the board shows around each section, flush across the
+      // edges it shares with its own cells so the section reads as one piece.
+      if (region && !free) {
+        const mat = document.createElement('div');
+        mat.className = 'mat';
+        mat.style.background = skin.fill;
+        const outer: Record<string, boolean> = {};
+        for (const [side, dr, dc] of SIDES) {
+          const neighbour = regionAt.get(cellKey(r + dr, c + dc));
+          outer[side] = !neighbour || neighbour.id !== region.id;
+          mat.style.setProperty(side, outer[side] ? 'var(--mat-inset)' : '0');
+          mat.style.setProperty(`border-${side}`, outer[side] ? `2px solid ${skin.edge}` : '1px solid rgba(0,0,0,0.10)');
+        }
+        // Round only the corners where two outer edges meet.
+        mat.style.borderRadius = [
+          outer['top'] && outer['left'],
+          outer['top'] && outer['right'],
+          outer['bottom'] && outer['right'],
+          outer['bottom'] && outer['left'],
+        ].map((round) => (round ? '5px' : '0')).join(' ');
+        cell.appendChild(mat);
       }
       if (region && !free) {
         const state = status.regions[region.id];
         if (state === 'ok' || state === 'bad') cell.classList.add(state);
       }
       if (region && flagged.has(region.id)) cell.classList.add('flagged');
-      const label = tagAt.get(cellKey(r, c));
-      if (label !== undefined) {
+      const tagged = tagAt.get(cellKey(r, c));
+      if (tagged) {
+        // The rule is a tab in the section's own colour, set inside the mat,
+        // so it reads as "the rule for this colour" rather than a footnote.
         const tag = document.createElement('span');
         tag.className = 'tag';
-        tag.textContent = label;
+        tag.textContent = tagged.label;
+        tag.style.background = tagged.skin.edge;
         cell.appendChild(tag);
       }
       grid.appendChild(cell);
