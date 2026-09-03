@@ -1,21 +1,17 @@
 import type { Cell, Difficulty, Domino, Puzzle, Region, Rule } from './types';
 import { makeRng, weightedIndex, type Rng } from './rng';
+import { buildShape, type ShapeFamily, type ShapeSpec } from './shapes';
 import { search } from './solve';
 
 type RuleKind = Rule['kind'];
 
-export interface Preset {
-  minDominoes: number;
-  maxDominoes: number;
-  /** The tiling grows inside a box of this many rows and columns. */
-  box: number;
+/** Everything a difficulty settles, on top of the shape fields in ShapeSpec. */
+export interface Preset extends ShapeSpec {
   /** Target region size range. Leftover cells can still form a smaller region. */
   minRegion: number;
   maxRegion: number;
   /** How many `none` regions the board may carry. */
   maxNone: number;
-  /** Easy grows compactly (near-rectangular); the rest grow irregular arms. */
-  compact: boolean;
   /** How many region carvings to try before settling for an ambiguous board. */
   carveAttempts: number;
   /** How many clues a carving may give up chasing a unique solution. */
@@ -32,6 +28,8 @@ export interface Preset {
   targetSolutions: number;
   /** Relative weight of each rule kind, used only where the kind is legal. */
   weights: Record<RuleKind, number>;
+  /** Relative weight of each board-shape family; see `shapeWeights` in shapes.ts. */
+  shapeWeights: Record<ShapeFamily, number>;
 }
 
 export const PRESETS: Record<Difficulty, Preset> = {
@@ -51,6 +49,8 @@ export const PRESETS: Record<Difficulty, Preset> = {
     rolls: 3,
     targetSolutions: 2,
     weights: { sum: 10, eq: 14, neq: 0, lt: 0, gt: 0, none: 2 },
+    // Easy leans on simple silhouettes, and two lobes need more cells than it has.
+    shapeWeights: { blob: 32, ring: 16, punched: 12, staircase: 10, lobes: 0, cross: 10, notched: 20 },
   },
   medium: {
     minDominoes: 7,
@@ -68,6 +68,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     rolls: 3,
     targetSolutions: 3,
     weights: { sum: 10, eq: 14, neq: 5, lt: 2, gt: 2, none: 3 },
+    shapeWeights: { blob: 16, ring: 20, punched: 24, staircase: 10, lobes: 8, cross: 10, notched: 12 },
   },
   hard: {
     minDominoes: 9,
@@ -85,6 +86,7 @@ export const PRESETS: Record<Difficulty, Preset> = {
     rolls: 5,
     targetSolutions: 3,
     weights: { sum: 10, eq: 16, neq: 5, lt: 2, gt: 2, none: 3 },
+    shapeWeights: { blob: 12, ring: 22, punched: 24, staircase: 12, lobes: 10, cross: 10, notched: 10 },
   },
 };
 
@@ -97,6 +99,7 @@ const TIGHTEN_NODE_BUDGET = 120_000;
 const LOOSENESS_CAPS = [12, 60];
 /** Candidate clues scored per tightening step; the rest are left for the next step. */
 const MOVES_PER_STEP = 24;
+/** Board shapes drawn before settling for one the dead-end check dislikes. */
 const SHAPE_ATTEMPTS = 20;
 /** Hard stop on tightening; by then every region is a single revealed pip. */
 const DEAL_ATTEMPTS = 14;
@@ -110,86 +113,6 @@ function doubleSixSet(): Domino[] {
 
 const DR = [-1, 0, 0, 1];
 const DC = [0, -1, 1, 0];
-
-/**
- * Grow a random domino tiling inside a `box` x `box` grid. The tiling is both
- * the board shape and a guaranteed solution, so the puzzle is solvable by
- * construction. Returns pairs of [r, c] cell coordinates, one pair per tile.
- */
-function growTiling(rng: Rng, preset: Preset, target: number): Array<[Cell, Cell]> {
-  const { box } = preset;
-  const filled: boolean[] = new Array(box * box).fill(false);
-  const inBox = (r: number, c: number): boolean => r >= 0 && c >= 0 && r < box && c < box;
-  const isFilled = (r: number, c: number): boolean => inBox(r, c) && filled[r * box + c] === true;
-
-  const tiles: Array<[Cell, Cell]> = [];
-  const place = (a: Cell, b: Cell): void => {
-    filled[a.r * box + a.c] = true;
-    filled[b.r * box + b.c] = true;
-    tiles.push([a, b]);
-  };
-
-  const mid = Math.floor(box / 2);
-  const startR = mid - rng.int(2);
-  const startC = mid - rng.int(2);
-  const horizontal = rng.next() < 0.5;
-  place(
-    { r: startR, c: startC },
-    horizontal ? { r: startR, c: startC + 1 } : { r: startR + 1, c: startC },
-  );
-
-  const filledNeighbours = (r: number, c: number): number => {
-    let count = 0;
-    for (let k = 0; k < 4; k++) if (isFilled(r + (DR[k] as number), c + (DC[k] as number))) count++;
-    return count;
-  };
-
-  while (tiles.length < target) {
-    // Every empty adjacent pair touching the shape. Prefer pairs where BOTH
-    // cells touch it: a cell whose only neighbour is its own partner is a dead
-    // end, and a dead-end domino sits in one region where it flips for free.
-    // Scanning right/down from each cell yields each unordered pair once.
-    const snug: Array<[Cell, Cell]> = [];
-    const loose: Array<[Cell, Cell]> = [];
-    for (let r = 0; r < box; r++) {
-      for (let c = 0; c < box; c++) {
-        if (isFilled(r, c)) continue;
-        for (let k = 2; k < 4; k++) {
-          const nr = r + (DR[k] as number);
-          const nc = c + (DC[k] as number);
-          if (!inBox(nr, nc) || isFilled(nr, nc)) continue;
-          const touch = (filledNeighbours(r, c) > 0 ? 1 : 0) + (filledNeighbours(nr, nc) > 0 ? 1 : 0);
-          if (touch === 2) snug.push([{ r, c }, { r: nr, c: nc }]);
-          else if (touch === 1) loose.push([{ r, c }, { r: nr, c: nc }]);
-        }
-      }
-    }
-    const candidates = snug.length > 0 ? snug : loose;
-    if (candidates.length === 0) break;
-
-    let chosen: [Cell, Cell];
-    if (preset.compact) {
-      // Hug the existing shape so easy boards stay near-rectangular.
-      let best = -1;
-      let bestOnes: Array<[Cell, Cell]> = [];
-      for (const pair of candidates) {
-        const score = filledNeighbours(pair[0].r, pair[0].c) + filledNeighbours(pair[1].r, pair[1].c);
-        if (score > best) {
-          best = score;
-          bestOnes = [pair];
-        } else if (score === best) {
-          bestOnes.push(pair);
-        }
-      }
-      chosen = rng.pick(bestOnes);
-    } else {
-      chosen = rng.pick(candidates);
-    }
-    place(chosen[0], chosen[1]);
-  }
-
-  return tiles;
-}
 
 /** Shift a tiling so its bounding box starts at (0, 0), and report its size. */
 function trim(tiles: Array<[Cell, Cell]>): { tiles: Array<[Cell, Cell]>; rows: number; cols: number } {
@@ -636,10 +559,11 @@ function hasUniqueTiling(shape: Shape, difficulty: Difficulty, seed: number): bo
 }
 
 /**
- * Build a puzzle: grow a random domino tiling (shape + guaranteed solution),
- * deal a hand from the double-six set onto it, carve connected regions over
- * the solved grid, give each region a rule that holds, then spend a small
- * clue budget on the most informative tightenings. The carving with the
+ * Build a puzzle: draw a board shape together with a domino tiling of it (the
+ * tiling is a guaranteed solution), deal a hand from the double-six set onto
+ * it, carve connected regions over the solved grid, give each region a rule
+ * that holds, then spend a small clue budget on the most informative
+ * tightenings. The carving with the
  * fewest solutions wins. The hand is shuffled last so its order leaks nothing.
  */
 export function generate(difficulty: Difficulty, seed: number = Date.now()): Puzzle {
@@ -661,13 +585,12 @@ function generateOnce(
   preset: Preset,
 ): { puzzle: Puzzle; score: number } {
   const rng = makeRng(derived);
-  const span = preset.maxDominoes - preset.minDominoes + 1;
 
   // A cell whose only neighbour is its own partner forces that domino into a
-  // single region, where it flips for free; grow again rather than keep one.
-  let shaped = trim(growTiling(rng, preset, preset.minDominoes + rng.int(span)));
+  // single region, where it flips for free; draw again rather than keep one.
+  let shaped = trim(buildShape(rng, preset));
   for (let attempt = 1; attempt < SHAPE_ATTEMPTS && (shaped.tiles.length < preset.minDominoes || hasDeadEnd(shaped)); attempt++) {
-    shaped = trim(growTiling(rng, preset, preset.minDominoes + rng.int(span)));
+    shaped = trim(buildShape(rng, preset));
   }
   const { tiles, rows, cols } = shaped;
 
