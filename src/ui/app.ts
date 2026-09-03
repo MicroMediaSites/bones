@@ -178,13 +178,19 @@ function deal(difficulty: Difficulty, seed: number): void {
   splash.className = 'dealing';
   splash.textContent = `Dealing ${difficulty}…`;
   root.replaceChildren(splash);
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => {
-      // The hash is the source of truth; if it moved on, so has the player.
-      if (location.hash !== `#${difficulty}-${seed}`) return;
-      openGame(generate(difficulty, seed));
-    }),
-  );
+  // Two frames guarantee the splash has painted — but frames never fire in a
+  // background tab (phone switched apps, tab hidden), so a timer races them.
+  // Whichever fires first builds the board; the other is a no-op.
+  let built = false;
+  const build = (): void => {
+    if (built) return;
+    built = true;
+    // The hash is the source of truth; if it moved on, so has the player.
+    if (location.hash !== `#${difficulty}-${seed}`) return;
+    openGame(generate(difficulty, seed));
+  };
+  requestAnimationFrame(() => requestAnimationFrame(build));
+  setTimeout(build, 150);
 }
 
 function openGame(puzzle: Puzzle): void {
