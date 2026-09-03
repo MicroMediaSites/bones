@@ -57,7 +57,9 @@ describe.each(DIFFICULTIES)('generate(%s)', (difficulty) => {
         // No single-cell regions: a lone cell with a rule is a revealed pip,
         // and a board of revealed pips is a lookup, not a puzzle. Carving may
         // run a region past the cap rather than leave a cell alone.
-        expect(region.cells.length).toBeGreaterThanOrEqual(2);
+        // The only single-cell regions are free cells (no rule): a lone cell
+        // with a rule would be a revealed pip.
+        if (region.cells.length === 1) expect(region.rule.kind).toBe('none');
         expect(region.cells.length).toBeLessThanOrEqual(preset.maxRegion + 2);
         for (const cell of region.cells) {
           const key = `${cell.r},${cell.c}`;
@@ -83,6 +85,19 @@ describe.each(DIFFICULTIES)('generate(%s)', (difficulty) => {
   test('is deterministic for a given seed', () => {
     expect(generate(difficulty, 4242)).toEqual(generate(difficulty, 4242));
   });
+});
+
+describe('free cells', () => {
+  test.each(DIFFICULTIES)('%s boards carry the preset number of free cells and no ≠', (difficulty) => {
+    const [min, max] = PRESETS[difficulty].freeCells;
+    for (let seed = 0; seed < 15; seed++) {
+      const puzzle = generate(difficulty, 300 + seed);
+      const free = puzzle.regions.filter((r) => r.cells.length === 1 && r.rule.kind === 'none').length;
+      expect(free).toBeGreaterThanOrEqual(min);
+      expect(free).toBeLessThanOrEqual(max);
+      expect(puzzle.regions.some((r) => r.rule.kind === 'neq')).toBe(false);
+    }
+  }, 120_000);
 });
 
 describe('rule mix', () => {
