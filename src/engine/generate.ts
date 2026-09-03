@@ -16,12 +16,20 @@ export interface Preset {
   maxNone: number;
   /** Easy grows compactly (near-rectangular); the rest grow irregular arms. */
   compact: boolean;
-  /** Allow lone cells to stand as their own region (a revealed pip). */
-  singletonClues: boolean;
   /** How many region carvings to try before settling for an ambiguous board. */
   carveAttempts: number;
   /** How many clues a carving may give up chasing a unique solution. */
   tightenAttempts: number;
+  /** Chance a growing region follows a neighbour with the same pip value. */
+  followEqual: number;
+  /** Share of regions that stop at two cells. */
+  pairShare: number;
+  /** Chance each dealt tile is chosen to sit next to equal pips (see dealHand). */
+  clusterBias: number;
+  /** Whole builds tried per seed; the tightest wins. */
+  rolls: number;
+  /** A build with this many solutions or fewer is accepted without another roll. */
+  targetSolutions: number;
   /** Relative weight of each rule kind, used only where the kind is legal. */
   weights: Record<RuleKind, number>;
 }
@@ -35,10 +43,14 @@ export const PRESETS: Record<Difficulty, Preset> = {
     maxRegion: 3,
     maxNone: 1,
     compact: true,
-    singletonClues: true,
     carveAttempts: 10,
-    tightenAttempts: 3,
-    weights: { sum: 10, eq: 14, neq: 0, lt: 0, gt: 0, none: 3 },
+    tightenAttempts: 5,
+    followEqual: 0.5,
+    pairShare: 0.6,
+    clusterBias: 0.6,
+    rolls: 3,
+    targetSolutions: 2,
+    weights: { sum: 10, eq: 14, neq: 0, lt: 0, gt: 0, none: 2 },
   },
   medium: {
     minDominoes: 7,
@@ -46,33 +58,47 @@ export const PRESETS: Record<Difficulty, Preset> = {
     box: 6,
     minRegion: 2,
     maxRegion: 4,
-    maxNone: 2,
+    maxNone: 1,
     compact: false,
-    singletonClues: false,
-    carveAttempts: 4,
-    tightenAttempts: 4,
-    weights: { sum: 10, eq: 7, neq: 7, lt: 5, gt: 5, none: 5 },
+    carveAttempts: 5,
+    tightenAttempts: 8,
+    followEqual: 0.8,
+    pairShare: 0.75,
+    clusterBias: 0.85,
+    rolls: 3,
+    targetSolutions: 3,
+    weights: { sum: 10, eq: 14, neq: 5, lt: 2, gt: 2, none: 3 },
   },
   hard: {
-    minDominoes: 11,
-    maxDominoes: 16,
+    minDominoes: 9,
+    maxDominoes: 12,
     box: 7,
     minRegion: 2,
-    maxRegion: 5,
-    maxNone: 4,
+    maxRegion: 3,
+    maxNone: 1,
     compact: false,
-    singletonClues: false,
-    carveAttempts: 2,
-    tightenAttempts: 4,
-    weights: { sum: 5, eq: 6, neq: 7, lt: 6, gt: 6, none: 7 },
+    carveAttempts: 5,
+    tightenAttempts: 12,
+    followEqual: 0.9,
+    pairShare: 0.7,
+    clusterBias: 0.9,
+    rolls: 5,
+    targetSolutions: 3,
+    weights: { sum: 10, eq: 16, neq: 5, lt: 2, gt: 2, none: 3 },
   },
 };
 
 /** Node budget for the uniqueness checks the generator runs on itself. */
 const TIGHTEN_NODE_BUDGET = 120_000;
+/**
+ * Solution counts are taken at rising caps so that clues can still be compared
+ * on a very loose board; past the last cap a board is simply "loose".
+ */
+const LOOSENESS_CAPS = [12, 60];
+/** Candidate clues scored per tightening step; the rest are left for the next step. */
+const MOVES_PER_STEP = 24;
 const SHAPE_ATTEMPTS = 20;
 /** Hard stop on tightening; by then every region is a single revealed pip. */
-const MAX_TIGHTEN = 40;
 const DEAL_ATTEMPTS = 14;
 
 /** The 28 tiles of a double-six set, [a, b] with a <= b. */
@@ -119,9 +145,12 @@ function growTiling(rng: Rng, preset: Preset, target: number): Array<[Cell, Cell
   };
 
   while (tiles.length < target) {
-    // Every empty adjacent pair with at least one cell touching the shape.
+    // Every empty adjacent pair touching the shape. Prefer pairs where BOTH
+    // cells touch it: a cell whose only neighbour is its own partner is a dead
+    // end, and a dead-end domino sits in one region where it flips for free.
     // Scanning right/down from each cell yields each unordered pair once.
-    const candidates: Array<[Cell, Cell]> = [];
+    const snug: Array<[Cell, Cell]> = [];
+    const loose: Array<[Cell, Cell]> = [];
     for (let r = 0; r < box; r++) {
       for (let c = 0; c < box; c++) {
         if (isFilled(r, c)) continue;
@@ -129,11 +158,13 @@ function growTiling(rng: Rng, preset: Preset, target: number): Array<[Cell, Cell
           const nr = r + (DR[k] as number);
           const nc = c + (DC[k] as number);
           if (!inBox(nr, nc) || isFilled(nr, nc)) continue;
-          if (filledNeighbours(r, c) === 0 && filledNeighbours(nr, nc) === 0) continue;
-          candidates.push([{ r, c }, { r: nr, c: nc }]);
+          const touch = (filledNeighbours(r, c) > 0 ? 1 : 0) + (filledNeighbours(nr, nc) > 0 ? 1 : 0);
+          if (touch === 2) snug.push([{ r, c }, { r: nr, c: nc }]);
+          else if (touch === 1) loose.push([{ r, c }, { r: nr, c: nc }]);
         }
       }
     }
+    const candidates = snug.length > 0 ? snug : loose;
     if (candidates.length === 0) break;
 
     let chosen: [Cell, Cell];
@@ -190,84 +221,164 @@ interface Shape {
   /** Solved pip value per playable cell, -1 elsewhere. */
   values: number[][];
   dominoes: Domino[];
+  /** "r,c" of the other half of each cell's domino in the solution. */
+  partner: Map<string, string>;
 }
 
 /** Deal a hand from the double-six set onto the tiling to get a solved grid. */
-function dealHand(rng: Rng, tiles: Array<[Cell, Cell]>, rows: number, cols: number): Shape {
-  const hand = rng.shuffle(doubleSixSet()).slice(0, tiles.length);
-  const cells: boolean[][] = Array.from({ length: rows }, () => new Array<boolean>(cols).fill(false));
-  const values: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));
-  tiles.forEach((pair, i) => {
-    const tile = hand[i] as Domino;
-    const flip = rng.next() < 0.5;
-    const [a, b] = pair;
-    (cells[a.r] as boolean[])[a.c] = true;
-    (cells[b.r] as boolean[])[b.c] = true;
-    (values[a.r] as number[])[a.c] = flip ? tile[1] : tile[0];
-    (values[b.r] as number[])[b.c] = flip ? tile[0] : tile[1];
-  });
-  return { rows, cols, cells, values, dominoes: hand };
+function hasDeadEnd({ tiles, rows, cols }: { tiles: Array<[Cell, Cell]>; rows: number; cols: number }): boolean {
+  const filled = new Set(tiles.flatMap(([a, b]) => [`${a.r},${a.c}`, `${b.r},${b.c}`]));
+  const degree = (cell: Cell, other: Cell): number => {
+    let n = 0;
+    for (let k = 0; k < 4; k++) {
+      const r = cell.r + (DR[k] as number);
+      const c = cell.c + (DC[k] as number);
+      if (r === other.r && c === other.c) continue;
+      if (r >= 0 && c >= 0 && r < rows && c < cols && filled.has(`${r},${c}`)) n++;
+    }
+    return n;
+  };
+  return tiles.some(([a, b]) => degree(a, b) === 0 || degree(b, a) === 0);
 }
 
 /**
- * Partition the playable cells into random connected regions. Regions cross
- * domino boundaries freely — that crossing is what makes the board a puzzle
- * rather than a lookup.
+ * Deal a hand from the double-six set onto the tiling. Tiles are placed one at
+ * a time, and with probability `preset.clusterBias` the tile and orientation
+ * chosen is the one that puts the most equal pips next to each other across
+ * domino boundaries. Equal neighbours are what make `eq` regions possible, and
+ * an `eq` region is the strongest clue on the board — a random hand almost
+ * never offers one.
+ */
+function dealHand(rng: Rng, tiles: Array<[Cell, Cell]>, rows: number, cols: number, preset: Preset): Shape {
+  const pool = rng.shuffle(doubleSixSet());
+  const cells: boolean[][] = Array.from({ length: rows }, () => new Array<boolean>(cols).fill(false));
+  const values: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));
+  const partner = new Map<string, string>();
+  for (const [a, b] of tiles) {
+    (cells[a.r] as boolean[])[a.c] = true;
+    (cells[b.r] as boolean[])[b.c] = true;
+    partner.set(`${a.r},${a.c}`, `${b.r},${b.c}`);
+    partner.set(`${b.r},${b.c}`, `${a.r},${a.c}`);
+  }
+  const at = (r: number, c: number): number =>
+    r >= 0 && c >= 0 && r < rows && c < cols ? ((values[r] as number[])[c] as number) : -1;
+  const equalNeighbours = (cell: Cell, other: Cell, v: number): number => {
+    let n = 0;
+    for (let k = 0; k < 4; k++) {
+      const r = cell.r + (DR[k] as number);
+      const c = cell.c + (DC[k] as number);
+      if ((r === other.r && c === other.c) || at(r, c) !== v) continue;
+      n++;
+    }
+    return n;
+  };
+
+  const hand: Domino[] = new Array<Domino>(tiles.length);
+  for (const i of rng.shuffle(tiles.map((_, i) => i))) {
+    const [a, b] = tiles[i] as [Cell, Cell];
+    let pick = { index: rng.int(pool.length), flip: rng.next() < 0.5 };
+    if (rng.next() < preset.clusterBias) {
+      let best = -1;
+      const ties: Array<{ index: number; flip: boolean }> = [];
+      pool.forEach((tile, index) => {
+        for (const flip of [false, true]) {
+          const va = flip ? tile[1] : tile[0];
+          const vb = flip ? tile[0] : tile[1];
+          const score = equalNeighbours(a, b, va) + equalNeighbours(b, a, vb);
+          if (score > best) {
+            best = score;
+            ties.length = 0;
+          }
+          if (score === best) ties.push({ index, flip });
+        }
+      });
+      pick = rng.pick(ties);
+    }
+    const tile = pool.splice(pick.index, 1)[0] as Domino;
+    hand[i] = tile;
+    (values[a.r] as number[])[a.c] = pick.flip ? tile[1] : tile[0];
+    (values[b.r] as number[])[b.c] = pick.flip ? tile[0] : tile[1];
+  }
+  return { rows, cols, cells, values, dominoes: hand, partner };
+}
+
+/**
+ * Partition the playable cells into connected regions, pairing cells across
+ * domino boundaries first. A region never holds both halves of one domino
+ * when it can be avoided: a tile inside a single sum region can be flipped for
+ * free, and every such tile doubles the solution count. Cutting every domino
+ * is what makes the board a puzzle rather than a lookup, and it also leaves no
+ * lone cells behind — a single-cell region is a revealed pip.
  */
 function carveRegions(rng: Rng, shape: Shape, preset: Preset): Cell[][] {
   const { rows, cols, cells } = shape;
+  const key = (cell: Cell): string => `${cell.r},${cell.c}`;
   const playable: Cell[] = [];
   for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++) if ((cells[r] as boolean[])[c]) playable.push({ r, c });
 
   const owner = new Map<string, number>();
   const groups: Cell[][] = [];
-  const key = (r: number, c: number): string => `${r},${c}`;
-  const free = (r: number, c: number): boolean =>
-    r >= 0 && c >= 0 && r < rows && c < cols && (cells[r] as boolean[])[c] === true && !owner.has(key(r, c));
+  const valueAt = (cell: Cell): number => (shape.values[cell.r] as number[])[cell.c] as number;
+  const partnerOf = (cell: Cell): string => shape.partner.get(key(cell)) as string;
+  const holdsPartner = (group: Cell[], cell: Cell): boolean => group.some((g) => key(g) === partnerOf(cell));
+  const neighbours = (cell: Cell): Cell[] => {
+    const out: Cell[] = [];
+    for (let k = 0; k < 4; k++) {
+      const r = cell.r + (DR[k] as number);
+      const c = cell.c + (DC[k] as number);
+      if (r >= 0 && c >= 0 && r < rows && c < cols && (cells[r] as boolean[])[c] === true) out.push({ r, c });
+    }
+    return out;
+  };
+  // Regions that follow equal pips make the strong `eq` rule available, so
+  // lean that way when the preset asks for it and such a neighbour exists.
+  const choose = (pool: Cell[], value: number): Cell => {
+    const alike = pool.filter((n) => valueAt(n) === value);
+    const from = alike.length > 0 && rng.next() < preset.followEqual ? alike : pool;
+    return from[rng.int(from.length)] as Cell;
+  };
 
-  const order = rng.shuffle([...playable]);
-  for (const seed of order) {
-    if (owner.has(key(seed.r, seed.c))) continue;
-    const size = preset.minRegion + rng.int(preset.maxRegion - preset.minRegion + 1);
-    const group: Cell[] = [];
-    const frontier: Cell[] = [seed];
-    while (group.length < size && frontier.length > 0) {
-      const pick = frontier.splice(rng.int(frontier.length), 1)[0] as Cell;
-      if (owner.has(key(pick.r, pick.c))) continue;
-      owner.set(key(pick.r, pick.c), groups.length);
-      group.push(pick);
-      for (let k = 0; k < 4; k++) {
-        const nr = pick.r + (DR[k] as number);
-        const nc = pick.c + (DC[k] as number);
-        if (free(nr, nc)) frontier.push({ r: nr, c: nc });
+  for (const seed of rng.shuffle(playable)) {
+    if (owner.has(key(seed))) continue;
+    const free = neighbours(seed).filter((n) => !owner.has(key(n)) && key(n) !== partnerOf(seed));
+
+    if (free.length > 0) {
+      const id = groups.length;
+      const group = [seed, choose(free, valueAt(seed))];
+      groups.push(group);
+      for (const cell of group) owner.set(key(cell), id);
+      // Two-cell regions carry the most constraint per clue; bigger ones add
+      // variety. pairShare says how often a region stops at two.
+      const size = rng.next() < preset.pairShare ? 2 : 3 + rng.int(preset.maxRegion - 2);
+      while (group.length < size) {
+        const seen = new Set<string>();
+        const frontier = group
+          .flatMap(neighbours)
+          .filter((n) => !owner.has(key(n)) && !holdsPartner(group, n) && !seen.has(key(n)) && seen.add(key(n)));
+        if (frontier.length === 0) break;
+        const pick = choose(frontier, valueAt(seed));
+        group.push(pick);
+        owner.set(key(pick), id);
       }
+      continue;
     }
-    groups.push(group);
-  }
 
-  if (!preset.singletonClues) mergeSingletons(rng, groups, owner, preset);
-  return groups.filter((g) => g.length > 0);
-}
-
-/** Fold lone cells into a neighbouring region so single-cell clues stay rare. */
-function mergeSingletons(rng: Rng, groups: Cell[][], owner: Map<string, number>, preset: Preset): void {
-  const key = (r: number, c: number): string => `${r},${c}`;
-  for (const index of rng.shuffle(groups.map((_, i) => i))) {
-    const group = groups[index] as Cell[];
-    if (group.length !== 1) continue;
-    const cell = group[0] as Cell;
-    for (const k of rng.shuffle([0, 1, 2, 3])) {
-      const target = owner.get(key(cell.r + (DR[k] as number), cell.c + (DC[k] as number)));
-      if (target === undefined || target === index) continue;
-      const into = groups[target] as Cell[];
-      if (into.length >= preset.maxRegion) continue;
-      into.push(cell);
-      owner.set(key(cell.r, cell.c), target);
-      groups[index] = [];
-      break;
+    // Every free neighbour is gone: join the smallest adjacent region that does
+    // not hold this cell's partner, or any adjacent region as a last resort.
+    const adjacent = [...new Set(neighbours(seed).flatMap((n) => (owner.has(key(n)) ? [owner.get(key(n)) as number] : [])))];
+    const bySize = (a: number, b: number): number => (groups[a] as Cell[]).length - (groups[b] as Cell[]).length;
+    const safe = adjacent.filter((id) => !holdsPartner(groups[id] as Cell[], seed)).sort(bySize);
+    const target = safe[0] ?? adjacent.sort(bySize)[0];
+    if (target === undefined) {
+      owner.set(key(seed), groups.length);
+      groups.push([seed]);
+      continue;
     }
+    (groups[target] as Cell[]).push(seed);
+    owner.set(key(seed), target);
   }
+  return groups;
 }
 
 /** Pick a rule that holds for `values`, weighted by the preset. */
@@ -283,9 +394,8 @@ function chooseRule(rng: Rng, values: number[], preset: Preset, noneBudget: numb
   };
 
   if (values.length === 1) {
-    // A single-cell `sum` just reveals the pip: a fine starter clue on easy,
-    // but it should stay rare once the board gets bigger.
-    offer({ kind: 'sum', n: sum }, preset.singletonClues ? w.sum : 2);
+    // A single-cell `sum` reveals the pip. Carving keeps these rare.
+    offer({ kind: 'sum', n: sum }, w.sum);
     offer({ kind: 'none' }, noneBudget > 0 ? w.none : 0);
   } else {
     offer({ kind: 'sum', n: sum }, w.sum);
@@ -304,13 +414,16 @@ function valuesOf(shape: Shape, cells: Cell[]): number[] {
 }
 
 /** Split a region's cells into two connected halves, or null if it won't split. */
+/** Split a region into two connected parts of at least `MIN_PART` cells each. */
+const MIN_PART = 2;
+
 function splitCells(rng: Rng, cells: Cell[]): [Cell[], Cell[]] | null {
-  if (cells.length < 2) return null;
+  if (cells.length < 2 * MIN_PART) return null;
   const key = (c: Cell): string => `${c.r},${c.c}`;
   const inRegion = new Map(cells.map((c) => [key(c), c]));
 
   for (let attempt = 0; attempt < 6; attempt++) {
-    const size = 1 + rng.int(cells.length - 1);
+    const size = MIN_PART + rng.int(cells.length - 2 * MIN_PART + 1);
     const taken = new Map<string, Cell>();
     const frontier: Cell[] = [rng.pick(cells)];
     while (taken.size < size && frontier.length > 0) {
@@ -323,7 +436,7 @@ function splitCells(rng: Rng, cells: Cell[]): [Cell[], Cell[]] | null {
       }
     }
     const rest = cells.filter((c) => !taken.has(key(c)));
-    if (taken.size === 0 || rest.length === 0) continue;
+    if (taken.size < MIN_PART || rest.length < MIN_PART) continue;
     if (!isConnected(rest)) continue;
     return [[...taken.values()], rest];
   }
@@ -350,38 +463,155 @@ function isConnected(cells: Cell[]): boolean {
 }
 
 /**
- * Nudge a puzzle toward a single solution by one step, cheapest first: pin a
- * free region, then a loose bound, then cut a region in two. Every rule is
- * read off the known solved grid, so the tiling stays a solution however
- * often we tighten. Returns false when nothing is left to tighten — by then
- * every region is a single cell with its pip spelled out.
+ * How many solutions a board has, counted up to the caps in LOOSENESS_CAPS.
+ * A board past the last cap, or one the solver cannot finish, scores worst.
  */
-function tighten(rng: Rng, regions: Region[], shape: Shape): boolean {
-  const exactSum = (cells: Cell[]): Rule => ({
-    kind: 'sum',
-    n: valuesOf(shape, cells).reduce((a, b) => a + b, 0),
-  });
-
-  for (const kinds of [['none'], ['lt', 'gt']] as RuleKind[][]) {
-    const candidates = regions.filter((r) => kinds.includes(r.rule.kind));
-    if (candidates.length === 0) continue;
-    const region = rng.pick(candidates);
-    region.rule = exactSum(region.cells);
-    return true;
+function looseness(puzzle: Puzzle): number {
+  const last = LOOSENESS_CAPS[LOOSENESS_CAPS.length - 1] as number;
+  for (const limit of LOOSENESS_CAPS) {
+    const result = search(puzzle, { limit, maxNodes: TIGHTEN_NODE_BUDGET });
+    if (result.aborted) return last + 1;
+    if (result.boards.length < limit) return result.boards.length;
   }
+  return last + 1;
+}
 
-  // Cut the biggest regions first — they carry the most ambiguity.
-  for (const minSize of [3, 2]) {
-    for (const region of rng.shuffle(regions.filter((r) => r.cells.length >= minSize))) {
-      const parts = splitCells(rng, region.cells);
-      if (!parts) continue;
-      region.cells = parts[0];
-      region.rule = exactSum(parts[0]);
-      regions.push({ id: regions.length, rule: exactSum(parts[1]), cells: parts[1] });
-      return true;
+interface Move {
+  apply(): void;
+  undo(): void;
+}
+
+/**
+ * Every clue-spending move available on a board. Each one keeps every region
+ * at MIN_PART cells or more — a lone cell with a rule on it is a revealed pip,
+ * and that is what turns a puzzle into a grid of answers.
+ */
+function moves(rng: Rng, puzzle: Puzzle, shape: Shape): Move[] {
+  const out: Move[] = [];
+  for (const region of puzzle.regions) {
+    const values = valuesOf(shape, region.cells);
+    const sum = values.reduce((a, b) => a + b, 0);
+    const before = region.rule;
+    const alternatives: Rule[] = [];
+    if (before.kind !== 'sum') alternatives.push({ kind: 'sum', n: sum });
+    if (before.kind !== 'eq' && values.length > 1 && values.every((v) => v === values[0])) alternatives.push({ kind: 'eq' });
+    if (before.kind !== 'neq' && values.length > 1 && new Set(values).size === values.length) alternatives.push({ kind: 'neq' });
+    for (const after of alternatives) {
+      out.push({
+        apply: () => {
+          region.rule = after;
+        },
+        undo: () => {
+          region.rule = before;
+        },
+      });
+    }
+    for (const shift of shiftMoves(puzzle, shape, region)) out.push(shift);
+    const parts = region.cells.length >= 2 * MIN_PART ? splitCells(rng, region.cells) : null;
+    if (parts) {
+      const [a, b] = parts;
+      const cells = region.cells;
+      const added: Region = { id: puzzle.regions.length, rule: { kind: 'sum', n: valuesOf(shape, b).reduce((x, y) => x + y, 0) }, cells: b };
+      out.push({
+        apply: () => {
+          region.cells = a;
+          region.rule = { kind: 'sum', n: valuesOf(shape, a).reduce((x, y) => x + y, 0) };
+          puzzle.regions.push(added);
+        },
+        undo: () => {
+          region.cells = cells;
+          region.rule = before;
+          puzzle.regions.pop();
+        },
+      });
     }
   }
-  return false;
+  return out;
+}
+
+/** A rule of the same kind for new values, if it still holds; otherwise the exact sum. */
+function rekey(rule: Rule, values: number[]): Rule {
+  const sum = values.reduce((a, b) => a + b, 0);
+  switch (rule.kind) {
+    case 'none':
+      return rule;
+    case 'eq':
+      return values.every((v) => v === values[0]) ? rule : { kind: 'sum', n: sum };
+    case 'neq':
+      return new Set(values).size === values.length ? rule : { kind: 'sum', n: sum };
+    case 'lt':
+      return sum < rule.n ? rule : { kind: 'sum', n: sum };
+    case 'gt':
+      return sum > rule.n ? rule : { kind: 'sum', n: sum };
+    case 'sum':
+      return { kind: 'sum', n: sum };
+  }
+}
+
+/**
+ * Moves that hand one edge cell of `from` to a neighbouring region. Region
+ * boundaries decide what a sum can see, so shifting one is often the most
+ * informative clue on a loose board. `from` keeps at least MIN_PART cells and
+ * stays connected; the receiving region may grow one past the size cap.
+ */
+function shiftMoves(puzzle: Puzzle, shape: Shape, from: Region): Move[] {
+  if (from.cells.length <= MIN_PART) return [];
+  const out: Move[] = [];
+  const owner = new Map<string, Region>();
+  for (const region of puzzle.regions) for (const cell of region.cells) owner.set(`${cell.r},${cell.c}`, region);
+  const cap = PRESETS[puzzle.difficulty].maxRegion + 1;
+
+  for (const cell of from.cells) {
+    const rest = from.cells.filter((c) => c !== cell);
+    if (!isConnected(rest)) continue;
+    const seen = new Set<Region>();
+    for (let k = 0; k < 4; k++) {
+      const to = owner.get(`${cell.r + (DR[k] as number)},${cell.c + (DC[k] as number)}`);
+      if (!to || to === from || seen.has(to) || to.cells.length >= cap) continue;
+      if (owner.get(shape.partner.get(`${cell.r},${cell.c}`) as string) === to) continue;
+      seen.add(to);
+      const fromBefore = { cells: from.cells, rule: from.rule };
+      const toBefore = { cells: to.cells, rule: to.rule };
+      out.push({
+        apply: () => {
+          from.cells = rest;
+          from.rule = rekey(fromBefore.rule, valuesOf(shape, rest));
+          to.cells = [...toBefore.cells, cell];
+          to.rule = rekey(toBefore.rule, valuesOf(shape, to.cells));
+        },
+        undo: () => {
+          from.cells = fromBefore.cells;
+          from.rule = fromBefore.rule;
+          to.cells = toBefore.cells;
+          to.rule = toBefore.rule;
+        },
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Spend up to `preset.tightenAttempts` clues on the move that shrinks the
+ * solution count the most each time. Stops early at one solution, or when no
+ * move helps. Returns the final looseness.
+ */
+function settle(rng: Rng, puzzle: Puzzle, shape: Shape, preset: Preset): number {
+  let current = looseness(puzzle);
+  for (let step = 0; step < preset.tightenAttempts && current > 1; step++) {
+    let best: { move: Move; score: number } | null = null;
+    for (const move of rng.shuffle(moves(rng, puzzle, shape)).slice(0, MOVES_PER_STEP)) {
+      move.apply();
+      const score = looseness(puzzle);
+      move.undo();
+      if (score < current && (!best || score < best.score)) best = { move, score };
+      if (score === 1) break;
+    }
+    if (!best) break;
+    best.move.apply();
+    current = best.score;
+  }
+  return current;
 }
 
 /**
@@ -409,23 +639,42 @@ function hasUniqueTiling(shape: Shape, difficulty: Difficulty, seed: number): bo
 /**
  * Build a puzzle: grow a random domino tiling (shape + guaranteed solution),
  * deal a hand from the double-six set onto it, carve connected regions over
- * the solved grid, give each region a rule that holds, then tighten toward a
- * unique solution. The hand is shuffled last so its order leaks nothing.
+ * the solved grid, give each region a rule that holds, then spend a small
+ * clue budget on the most informative tightenings. The carving with the
+ * fewest solutions wins. The hand is shuffled last so its order leaks nothing.
  */
 export function generate(difficulty: Difficulty, seed: number = Date.now()): Puzzle {
   const preset = PRESETS[difficulty];
-  const rng = makeRng(seed);
+  let best: { puzzle: Puzzle; score: number } | null = null;
+  for (let roll = 0; roll < preset.rolls; roll++) {
+    const candidate = generateOnce(difficulty, seed, (seed + roll * 0x9e3779b1) | 0, preset);
+    if (!best || candidate.score < best.score) best = candidate;
+    if (best.score <= preset.targetSolutions) break;
+  }
+  return (best as { puzzle: Puzzle; score: number }).puzzle;
+}
+
+/** One full build from a derived seed; `seed` is what the puzzle reports. */
+function generateOnce(
+  difficulty: Difficulty,
+  seed: number,
+  derived: number,
+  preset: Preset,
+): { puzzle: Puzzle; score: number } {
+  const rng = makeRng(derived);
   const span = preset.maxDominoes - preset.minDominoes + 1;
 
-  let grown = growTiling(rng, preset, preset.minDominoes + rng.int(span));
-  for (let attempt = 1; attempt < SHAPE_ATTEMPTS && grown.length < preset.minDominoes; attempt++) {
-    grown = growTiling(rng, preset, preset.minDominoes + rng.int(span));
+  // A cell whose only neighbour is its own partner forces that domino into a
+  // single region, where it flips for free; grow again rather than keep one.
+  let shaped = trim(growTiling(rng, preset, preset.minDominoes + rng.int(span)));
+  for (let attempt = 1; attempt < SHAPE_ATTEMPTS && (shaped.tiles.length < preset.minDominoes || hasDeadEnd(shaped)); attempt++) {
+    shaped = trim(growTiling(rng, preset, preset.minDominoes + rng.int(span)));
   }
-  const { tiles, rows, cols } = trim(grown);
+  const { tiles, rows, cols } = shaped;
 
-  let shape = dealHand(rng, tiles, rows, cols);
+  let shape = dealHand(rng, tiles, rows, cols, preset);
   for (let deal = 1; deal < DEAL_ATTEMPTS && !hasUniqueTiling(shape, difficulty, seed); deal++) {
-    shape = dealHand(rng, tiles, rows, cols);
+    shape = dealHand(rng, tiles, rows, cols, preset);
   }
 
   const carve = (): Puzzle => {
@@ -445,34 +694,17 @@ export function generate(difficulty: Difficulty, seed: number = Date.now()): Puz
     };
   };
 
-  // Prefer a carving that is unique on its own merits. Tightening always gets
-  // there eventually, but every tightening step spends a clue, so we re-carve
-  // a few times before spending many of them.
-  let puzzle = carve();
+  let best: { puzzle: Puzzle; score: number } | null = null;
   for (let round = 0; round < preset.carveAttempts; round++) {
-    if (round > 0) puzzle = carve();
-    if (settle(rng, puzzle, shape, preset)) break;
+    const puzzle = carve();
+    const score = settle(rng, puzzle, shape, preset);
+    if (!best || score < best.score) best = { puzzle, score };
+    if (score === 1) break;
   }
+  const puzzle = (best as { puzzle: Puzzle; score: number }).puzzle;
 
   puzzle.regions.forEach((region, id) => {
     region.id = id;
   });
-  return puzzle;
-}
-
-/**
- * Tighten a carving in place until it has one solution, or until the clue
- * budget runs out. An ambiguous puzzle is still winnable — the game checks
- * rules, not one blessed arrangement — but a puzzle the solver can't finish
- * inside its node budget is a bad board, so those keep tightening past the
- * budget. Returns whether the puzzle ended up with a unique solution.
- */
-function settle(rng: Rng, puzzle: Puzzle, shape: Shape, preset: Preset): boolean {
-  for (let step = 0; step < MAX_TIGHTEN; step++) {
-    const result = search(puzzle, { limit: 2, maxNodes: TIGHTEN_NODE_BUDGET });
-    if (!result.aborted && result.boards.length === 1) return true;
-    if (step >= preset.tightenAttempts && !result.aborted) return false;
-    if (!tighten(rng, puzzle.regions, shape)) return false;
-  }
-  return false;
+  return best as { puzzle: Puzzle; score: number };
 }
