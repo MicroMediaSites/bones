@@ -344,22 +344,6 @@ function carveRegions(rng: Rng, shape: Shape, preset: Preset): Cell[][] {
     return from[rng.int(from.length)] as Cell;
   };
 
-  // Reserve the free cells first: single-cell regions that will carry no
-  // rule. Spread them out (never two adjacent) so they read as gaps in the
-  // clues rather than a blank patch, and never on a cell whose partner is
-  // also free — the tile between two free cells would be unconstrained.
-  const [minFree, maxFree] = preset.freeCells;
-  const wanted = minFree + rng.int(maxFree - minFree + 1);
-  const freeKeys = new Set<string>();
-  for (const cell of rng.shuffle([...playable])) {
-    if (freeKeys.size >= wanted) break;
-    if (neighbours(cell).some((n) => freeKeys.has(key(n)))) continue;
-    if (freeKeys.has(partnerOf(cell))) continue;
-    freeKeys.add(key(cell));
-    owner.set(key(cell), groups.length);
-    groups.push([cell]);
-  }
-
   for (const seed of rng.shuffle(playable)) {
     if (owner.has(key(seed))) continue;
     const free = neighbours(seed).filter((n) => !owner.has(key(n)) && key(n) !== partnerOf(seed));
@@ -387,9 +371,7 @@ function carveRegions(rng: Rng, shape: Shape, preset: Preset): Cell[][] {
 
     // Every free neighbour is gone: join the smallest adjacent region that does
     // not hold this cell's partner, or any adjacent region as a last resort.
-    const adjacent = [...new Set(neighbours(seed).flatMap((n) => (owner.has(key(n)) ? [owner.get(key(n)) as number] : [])))].filter(
-      (id) => !freeKeys.has(key((groups[id] as Cell[])[0] as Cell)) || (groups[id] as Cell[]).length > 1,
-    );
+    const adjacent = [...new Set(neighbours(seed).flatMap((n) => (owner.has(key(n)) ? [owner.get(key(n)) as number] : [])))];
     const bySize = (a: number, b: number): number => (groups[a] as Cell[]).length - (groups[b] as Cell[]).length;
     const safe = adjacent.filter((id) => !holdsPartner(groups[id] as Cell[], seed)).sort(bySize);
     const target = safe[0] ?? adjacent.sort(bySize)[0];
@@ -400,6 +382,28 @@ function carveRegions(rng: Rng, shape: Shape, preset: Preset): Cell[][] {
     }
     (groups[target] as Cell[]).push(seed);
     owner.set(key(seed), target);
+  }
+
+  // Free cells: single cells with no rule (Pips has these). Detach them from
+  // regions of three or more cells so the rest stays a real region. Spread
+  // them out — never two adjacent, never both halves of one tile — so they
+  // read as gaps in the clues rather than a blank patch.
+  const [minFree, maxFree] = preset.freeCells;
+  const wanted = minFree + rng.int(maxFree - minFree + 1);
+  const freeKeys = new Set<string>();
+  for (const group of rng.shuffle(groups.map((_, i) => i)).map((i) => groups[i] as Cell[])) {
+    if (freeKeys.size >= wanted) break;
+    if (group.length < 3) continue;
+    for (const cell of rng.shuffle([...group])) {
+      const rest = group.filter((c) => c !== cell);
+      if (!isConnected(rest)) continue;
+      if (neighbours(cell).some((n) => freeKeys.has(key(n)))) continue;
+      if (freeKeys.has(partnerOf(cell))) continue;
+      group.splice(group.indexOf(cell), 1);
+      freeKeys.add(key(cell));
+      groups.push([cell]);
+      break;
+    }
   }
   return groups;
 }
