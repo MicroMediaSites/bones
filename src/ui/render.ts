@@ -69,14 +69,16 @@ export function renderBoard(
       const cell = document.createElement('div');
       cell.className = free ? 'cell free' : 'cell';
       cell.style.gridArea = `${r + 1} / ${c + 1}`;
-      cell.style.background = free ? 'transparent' : skin.fill;
+      // Free cells sit "below" the board: a darker well with a clear dashed
+      // rim, so where a free cell ends is never in doubt next to a region.
+      cell.style.background = free ? 'rgba(0, 0, 0, 0.26)' : skin.fill;
       for (const [side, dr, dc] of SIDES) {
         const neighbour = regionAt.get(cellKey(r + dr, c + dc));
         const perimeter = !region || !neighbour || neighbour.id !== region.id;
         cell.style.setProperty(
           `border-${side}`,
           free
-            ? '1px dashed rgba(232,226,212,0.22)'
+            ? '2px dashed rgba(232,226,212,0.45)'
             : perimeter
               ? `2px solid ${skin.edge}`
               : '1px solid rgba(255,255,255,0.05)',
