@@ -79,12 +79,12 @@ export function renderBoard(
         const mat = document.createElement('div');
         mat.className = 'mat';
         mat.style.background = skin.fill;
+        const inRegion = (dr: number, dc: number): boolean => regionAt.get(cellKey(r + dr, c + dc))?.id === region.id;
         const outer: Record<string, boolean> = {};
         for (const [side, dr, dc] of SIDES) {
-          const neighbour = regionAt.get(cellKey(r + dr, c + dc));
-          outer[side] = !neighbour || neighbour.id !== region.id;
+          outer[side] = !inRegion(dr, dc);
           mat.style.setProperty(side, outer[side] ? 'var(--mat-inset)' : '0');
-          mat.style.setProperty(`border-${side}`, outer[side] ? `2px solid ${skin.edge}` : '1px solid rgba(0,0,0,0.10)');
+          mat.style.setProperty(`border-${side}`, outer[side] ? `var(--mat-border) solid ${skin.edge}` : '1px solid rgba(0,0,0,0.10)');
         }
         // Round only the corners where two outer edges meet.
         mat.style.borderRadius = [
@@ -92,8 +92,25 @@ export function renderBoard(
           outer['top'] && outer['right'],
           outer['bottom'] && outer['right'],
           outer['bottom'] && outer['left'],
-        ].map((round) => (round ? '5px' : '0')).join(' ');
+        ].map((round) => (round ? 'var(--mat-radius)' : '0')).join(' ');
         cell.appendChild(mat);
+        // Concave corners: both sides flush with this region but the diagonal
+        // cell is not in it. The two neighbours' outlines stop at this cell's
+        // edge, so this cell draws the short segments that turn the corner —
+        // a notch of board showing through, with the outline curving round it.
+        const corners: Array<[string, string, number, number]> = [
+          ['top', 'left', -1, -1],
+          ['top', 'right', -1, 1],
+          ['bottom', 'left', 1, -1],
+          ['bottom', 'right', 1, 1],
+        ];
+        for (const [v, h, dr, dc] of corners) {
+          if (outer[v] || outer[h] || inRegion(dr, dc)) continue;
+          const notch = document.createElement('div');
+          notch.className = `notch notch-${v}-${h}`;
+          notch.style.setProperty('--edge', skin.edge);
+          cell.appendChild(notch);
+        }
       }
       if (region && !free) {
         const state = status.regions[region.id];

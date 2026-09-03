@@ -249,6 +249,8 @@ a {
      does. Regions sit on top as .mat elements (render.ts). */
   --slot: linear-gradient(160deg, #3b332b 0%, #2f2822 100%);
   --mat-inset: max(4px, calc(var(--cell) * 0.07));
+  --mat-border: max(2px, calc(var(--cell) * 0.035));
+  --mat-radius: max(5px, calc(var(--cell) * 0.1));
   background: var(--slot);
   box-shadow:
     inset 0 0 0 1px rgba(255, 240, 210, 0.07),
@@ -263,6 +265,23 @@ a {
   pointer-events: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
+
+/* A concave corner of a section: a square of board showing through the mat,
+   bounded by the two outline segments that turn the corner (see render.ts).
+   Sized so its outer edge lines up with the neighbours' inset outlines. */
+.notch {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  width: var(--mat-inset);
+  height: var(--mat-inset);
+  background: linear-gradient(160deg, #3b332b 0%, #332b24 100%);
+  border: 0 solid var(--edge);
+}
+.notch-top-left { top: 0; left: 0; border-right-width: var(--mat-border); border-bottom-width: var(--mat-border); border-bottom-right-radius: var(--mat-radius); }
+.notch-top-right { top: 0; right: 0; border-left-width: var(--mat-border); border-bottom-width: var(--mat-border); border-bottom-left-radius: var(--mat-radius); }
+.notch-bottom-left { bottom: 0; left: 0; border-right-width: var(--mat-border); border-top-width: var(--mat-border); border-top-right-radius: var(--mat-radius); }
+.notch-bottom-right { bottom: 0; right: 0; border-left-width: var(--mat-border); border-top-width: var(--mat-border); border-top-left-radius: var(--mat-radius); }
 
 .cell.ok .mat {
   background-image: linear-gradient(rgba(124, 172, 118, 0.34), rgba(124, 172, 118, 0.34));
@@ -289,8 +308,8 @@ a {
    covers the cell it sits on. Background colour comes from render.ts. */
 .tag {
   position: absolute;
-  top: calc(var(--mat-inset) + 4px);
-  left: calc(var(--mat-inset) + 4px);
+  top: calc(var(--mat-inset) + var(--mat-border) + 3px);
+  left: calc(var(--mat-inset) + var(--mat-border) + 3px);
   z-index: 3;
   pointer-events: none;
   min-width: 1.4em;
