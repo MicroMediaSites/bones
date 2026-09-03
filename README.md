@@ -10,8 +10,7 @@ Rules a region can carry:
 | `7` | the pips in the region add up to exactly 7 |
 | `<5` / `>9` | the pips add up to less than 5 / more than 9 |
 | `=` | every pip in the region is the same |
-| `≠` | every pip in the region is different |
-| (blank) | anything goes |
+| (blank, dashed) | no requirement — anything goes |
 
 Every puzzle is generated on demand at easy, medium, or hard, and checked by
 a solver before it is served.

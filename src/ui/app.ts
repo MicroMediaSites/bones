@@ -264,7 +264,7 @@ function renderHome(): void {
     ['<5', 'pips add up to less than 5'],
     ['>9', 'pips add up to more than 9'],
     ['=', 'every pip the same'],
-    ['≠', 'every pip different'],
+    ['·', 'no requirement — anything goes'],
   ];
   for (const [glyph, meaning] of entries) {
     const key = document.createElement('b');
