@@ -385,7 +385,11 @@ function saveCurrentRating(): void {
   toast(stored ? 'Saved' : 'Could not save');
 }
 
-/** The id of the region under a viewport point, or null if not on the board. */
+/**
+ * The id of the region under a viewport point, or null if not on the board.
+ * Cells are uniform and the grid has no gap, so a plain divide locates one —
+ * the same arithmetic `snapTarget` uses.
+ */
 function regionAtPoint(g: Game, x: number, y: number): number | null {
   const rect = boardRect();
   if (!rect || !overBoard(x, y)) return null;

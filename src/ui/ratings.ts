@@ -5,7 +5,7 @@
 // seed does not reliably reproduce the board it was rated on — the stored
 // puzzle is the record of truth, and the reason a record stands alone.
 
-import type { Difficulty, Puzzle } from '../engine';
+import type { Puzzle } from '../engine';
 
 export const RATINGS_KEY = 'bones.ratings';
 
@@ -93,11 +93,6 @@ export function isRating(v: unknown): v is Rating {
     r['regions'].every((n) => typeof n === 'number') &&
     isPuzzle(r['puzzle'])
   );
-}
-
-/** The difficulty a record belongs to, read from the puzzle it carries. */
-export function difficultyOf(rating: Rating): Difficulty {
-  return rating.puzzle.difficulty;
 }
 
 // ---------------------------------------------------------------- storage
